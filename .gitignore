@@ -1,0 +1,5 @@
+*.whl
+*.pkl
+*.txt
+__pycache__/
+data/
