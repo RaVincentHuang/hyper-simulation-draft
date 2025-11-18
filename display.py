@@ -11,7 +11,7 @@ nlp0.add_pipe('fastcoref',
 
 nlp1 = spacy.load('en_core_web_trf')
 
-text = "a new software's function is to this process data. The goal of this process is the optimization."
+text = "Scholar Nilsson delivered a keynote at Stockholmsmässan on August. He also participated in roundtable discussions. That day, the venue hosted an AI ethics seminar, which featured his keynote and discussions."
 doc1 = nlp0(text, component_cfg={"fastcoref": {'resolve_text': True}})
 print(f"Resolved Text: {doc1._.resolved_text}")
 doc2 = nlp1(doc1._.resolved_text)

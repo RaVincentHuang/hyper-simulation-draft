@@ -2,4 +2,6 @@
 *.pkl
 *.txt
 __pycache__/
-data/
+output_data/
+select_data/
+test_data/

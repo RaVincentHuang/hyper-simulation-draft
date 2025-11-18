@@ -12,6 +12,36 @@ nlp1 = spacy.load('en_core_web_trf')
 
 text = "a new software's function is to this process data. The goal of this process is the optimization."
 
+# Give all node that share the same ID a single string.
+def load_ctx_texts(json_dir):
+    texts = []
+    def _extract_from_obj(obj):
+        if not isinstance(obj, dict):
+            return
+        q = obj.get("q")
+        if isinstance(q, str):
+            texts.append(q)
+        d = obj.get("d")
+        if isinstance(d, list):
+            for item in d:
+                if isinstance(item, str):
+                    texts.append(item)
+    for pattern in ("*.json", "*.jsonl"):
+        for path in glob.glob(os.path.join(json_dir, pattern)):
+            with open(path, "r", encoding="utf-8") as f:
+                if path.lower().endswith(".jsonl"):
+                    # 逐行处理 JSONL
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            obj = json.loads(line)
+                            _extract_from_obj(obj)
+                else:
+                    obj = json.load(f)
+                    _extract_from_obj(obj)
+    print(texts)
+    return texts
+
 def get_rel(nlp0, nlp1, text):
     doc1 = nlp0(text, component_cfg={"fastcoref": {'resolve_text': True}})
     print(f"Resolved Text: {doc1._.resolved_text}")
@@ -22,8 +52,8 @@ def get_rel(nlp0, nlp1, text):
         for span in spans_to_merge:
             retokenizer.merge(span)
 
-    for token in doc2:
-        print(f"Token: '{token.text}', Lemma: '{token.lemma_}', Dep: {token.dep_} ['{token.head.text}'], Ent: {token.ent_type_}, POS: {token.pos_}, TAG: {token.tag_}")
+    # for token in doc2:
+    #     print(f"Token: '{token.text}', Lemma: '{token.lemma_}', Dep: {token.dep_} ['{token.head.text}'], Ent: {token.ent_type_}, POS: {token.pos_}, TAG: {token.tag_}")
 
     nodes, roots = Node.from_doc(doc2)
 # print(f"Dependency Tree Nodes:{nodes}")
@@ -36,31 +66,18 @@ def get_rel(nlp0, nlp1, text):
 #     for r in rel:
 #         print(r)
 
-# Give all node that share the same ID a single string.
-
-
-def load_ctx_texts(json_dir):
-    texts = []
-    for path in glob.glob(os.path.join(json_dir, "*.json")):
-        with open(path, "r", encoding="utf-8") as f:
-            try:
-                obj = json.load(f)
-            except json.JSONDecodeError:
-                continue
-            for ctx in obj.get("ctxs", []):
-                t = ctx.get("text")
-                if isinstance(t, str):
-                    texts.append(t)
-    return texts
 # Example usage: set json_dir to the folder containing your JSON files
-json_dir = "/home/vincent/rag/data_select/popqa/retrival/"
-target_dir = "/home/vincent/rag/data_select/popqa/mygo/"
+json_dir = f"D:\\desktop\\experiment\\spacy\\test_data"
+target_dir = f"D:\\desktop\\experiment\\spacy\\output_data"
 ctx_texts = load_ctx_texts(json_dir)
 cnt = 0
-now = 2125
+now = 25
 for text in ctx_texts:
-    if cnt < now:
-        cnt += 1
+    print(f"{cnt}: {text}")
+    # if cnt < now: # 这个是为啥？
+        # cnt += 1
+        # continue
+    if cnt > now:
         continue
     vertices, rel, id_map = get_rel(nlp0, nlp1, text)
     res = ""

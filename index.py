@@ -24,13 +24,13 @@ def build_faiss_index(embs: np.ndarray, ids):
 	# L2-normalize so IndexFlatIP behaves like cosine similarity
 	norms = np.linalg.norm(embs, axis=1, keepdims=True)
 	embs = embs / np.clip(norms, 1e-12, None)
-
+    
 	d = embs.shape[1]
 	embs = np.ascontiguousarray(embs)
 	ids_arr = np.asarray(list(ids), dtype="int64")
 	orig = faiss.IndexFlatIP(d)
 	id_index = faiss.IndexIDMap(orig)
-	id_index.add_with_ids(embs, ids_arr, n)
+	id_index.add_with_ids(embs, ids_arr)
 	return id_index
 
 
@@ -50,20 +50,8 @@ if __name__ == "__main__":
 	n, d = 1000, 128
 	embs = np.random.randn(n, d).astype("float32")
 	ids = list(range(10000, 10000 + n))
-
-	if faiss is None:
-		print("faiss not installed. To use FAISS install: pip install faiss-cpu")
-		print("Demo: returning nearest by simple numpy cosine for the first 5 items")
-		q = np.random.randn(d).astype("float32")
-		q = q / np.linalg.norm(q)
-		embs_norm = embs / np.clip(np.linalg.norm(embs, axis=1, keepdims=True), 1e-12, None)
-		sims = embs_norm @ q
-		idxs = np.argsort(-sims)[:5]
-		for i in idxs:
-			print(f"id={ids[i]}  cosine={float(sims[i]):.4f}")
-	else:
-		idx = build_faiss_index(embs, ids)
-		q = np.random.randn(d).astype("float32")
-		ids_out, scores = search_faiss(idx, q, k=5)
-		print("ids:", ids_out)
-		print("scores:", scores)
+	idx = build_faiss_index(embs, ids)
+	q = np.random.randn(d).astype("float32")
+	ids_out, scores = search_faiss(idx, q, k=5)
+	print("ids:", ids_out)
+	print("scores:", scores)

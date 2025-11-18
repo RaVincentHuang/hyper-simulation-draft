@@ -1,4 +1,5 @@
 from spacy.tokens import Doc, Span, Token
+from spacy.util import filter_spans
 
 def get_level_order(doc: Doc, reversed=False) -> list[Token]:
     levels: dict[int, list[Token]] = {}
@@ -203,6 +204,7 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
             spans_to_merge.append(span)
             ent_token_idxs.update(range(span.start, span.end))
 
-
+    # Remove overlaps and nested spans
+    spans_to_merge = list(filter_spans(spans_to_merge))
     spans_to_merge = sorted(spans_to_merge, key=lambda s: s.start, reverse=True)
     return spans_to_merge

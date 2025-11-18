@@ -570,3 +570,4 @@ class Dependency:
                     cnt += 1
 
         return self.vertexes, relationships, vertex_id_map
+
