@@ -4,11 +4,9 @@ from combine import combine, calc_correfs_str
 from dependency import Dependency, Node, LocalDoc
 import os, glob, json
 
-nlp0 = spacy.load('en_core_web_trf')
-nlp0.add_pipe('fastcoref', 
+nlp = spacy.load('en_core_web_trf')
+nlp.add_pipe('fastcoref', 
             config={'model_architecture': 'LingMessCoref', 'model_path': 'biu-nlp/lingmess-coref', 'device': 'cpu'})
-
-nlp1 = spacy.load('en_core_web_trf')
 
 text = "a new software's function is to this process data. The goal of this process is the optimization."
 
@@ -39,26 +37,25 @@ def load_ctx_texts(json_dir):
                 else:
                     obj = json.load(f)
                     _extract_from_obj(obj)
-    print(texts)
+    # print(texts)
     return texts
 
-def get_rel(nlp0, nlp1, text):
-    doc1 = nlp0(text, component_cfg={"fastcoref": {'resolve_text': True}})
-    print(f"Resolved Text: {doc1._.resolved_text}")
-    correfs = calc_correfs_str(doc1)
-    doc2 = nlp1(doc1._.resolved_text)
-    spans_to_merge = combine(doc2, correfs)
-    with doc2.retokenize() as retokenizer:
+def get_rel(nlp, text):
+    doc = nlp(text, component_cfg={"fastcoref": {'resolve_text': True}})
+    print(f"Resolved Text: {doc._.resolved_text}")
+    correfs = calc_correfs_str(doc)
+    spans_to_merge = combine(doc, correfs)
+    with doc.retokenize() as retokenizer:
         for span in spans_to_merge:
             retokenizer.merge(span)
 
-    # for token in doc2:
+    # for token in doc:
     #     print(f"Token: '{token.text}', Lemma: '{token.lemma_}', Dep: {token.dep_} ['{token.head.text}'], Ent: {token.ent_type_}, POS: {token.pos_}, TAG: {token.tag_}")
 
-    nodes, roots = Node.from_doc(doc2)
+    nodes, roots = Node.from_doc(doc)
 # print(f"Dependency Tree Nodes:{nodes}")
 # print(f"Dependency Tree Roots:{roots}")
-    local_doc = LocalDoc(doc2)
+    local_doc = LocalDoc(doc)
     dep = Dependency(nodes, roots, local_doc)
     vertices, rel, id_map = dep.solve_conjunctions().mark_pronoun_antecedents().mark_prefixes().mark_vertex().compress_dependencies().calc_relationships()
     return vertices, rel, id_map
@@ -79,7 +76,7 @@ for text in ctx_texts:
         # continue
     if cnt > now:
         continue
-    vertices, rel, id_map = get_rel(nlp0, nlp1, text)
+    vertices, rel, id_map = get_rel(nlp, text)
     res = ""
     for r in rel:
         res += f"{r}\n"

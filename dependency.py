@@ -171,6 +171,9 @@ class Node:
         self.suffix_agent: str | None = None
         self.prefix_index: int | None = None
         self.suffix_index: int | None = None
+        
+        self.correfence_id: int | None = None
+        self.is_correfence_primary: bool = False
 
         self.head: Node | None = None
         self.children: list[Node] = []
@@ -187,7 +190,7 @@ class Node:
         nodes: list[Node] = []
         wildcard_tags = {',', '.', '-LRB-', '-RRB-', '``', ':', "''", 'PRP$', 'WP$', '$'}
         for token in doc:
-            print(f"Token: '{token.text}', Lemma: '{token.lemma_}', Dep: {token.dep_} ['{token.head.text}'], Ent: {token.ent_type_}, POS: {token.pos_}, TAG: {token.tag_}")
+            # print(f"Token: '{token.text}', Lemma: '{token.lemma_}', Dep: {token.dep_} ['{token.head.text}'], Ent: {token.ent_type_}, POS: {token.pos_}, TAG: {token.tag_}")
             pos = token.pos_
             tag = "WILDCARD" if token.tag_ in wildcard_tags else token.tag_
             dep = token.dep_
@@ -214,6 +217,60 @@ class Node:
                 node.lefts.append(nodes[left.i])
             for right in token.rights:
                 node.rights.append(nodes[right.i])
+        
+        # 向node里面标记指代
+        if doc._.coref_clusters is not None and doc._.resolved_text is not None:
+            text, resolved_text, coref_clusters = doc.text, doc._.resolved_text, doc._.coref_clusters
+            # print(f"\n[Coreference Processing] Found {len(coref_clusters)} coreference cluster(s)")
+            cluster_id = 0
+            for cluster in coref_clusters:
+                cluster_tokens: list[Node] = []
+                cluster_texts: list[str] = []
+                for start, end in cluster:
+                    span_text = text[start:end]
+                    cluster_texts.append(span_text)
+                    # print(f"    - Span [{start}:{end}]: '{span_text}'") # 找到这轮指代中的span
+                    for token in doc:
+                        token_start = token.idx
+                        token_end = token.idx + len(token.text)
+                        if not (token_end <= start or token_start >= end):
+                            if nodes[token.i] not in cluster_tokens:
+                                cluster_tokens.append(nodes[token.i])
+                
+                if len(cluster_tokens) > 1:
+                    # 确定主节点：找到在resolved_text中相同位置出现的文本
+                    primary_text = None
+                    primary_start = None
+                    primary_end = None
+                    for start, end in cluster:
+                        span_text = text[start:end]
+                        if span_text in resolved_text:
+                            resolved_pos = resolved_text.find(span_text)
+                            if resolved_pos != -1:
+                                primary_text = span_text
+                                primary_start = start
+                                primary_end = end
+                                break
+                    # if primary_text:
+                        # print(f"    Primary text: '{primary_text}' at [{primary_start}:{primary_end}]")
+                    # else:
+                        # print(f"    Warning: No primary text found for cluster {cluster_id}")
+                    for node in cluster_tokens:
+                        node.correfence_id = cluster_id
+                        # Check if this node is in the primary span
+                        token = doc[node.index]
+                        token_start = token.idx
+                        token_end = token.idx + len(token.text)
+                        is_primary = not (token_end <= primary_start or token_start >= primary_end) if primary_start is not None and primary_end is not None else False
+                        if is_primary:
+                            node.is_correfence_primary = True
+                        # print(f"      - Node '{node.text}' (index={node.index}): correfence_id={cluster_id}, is_primary={is_primary}")
+                    
+                    cluster_id += 1
+                else:
+                    print(f"    Skipping cluster {cluster_id} (only {len(cluster_tokens)} token node, need > 1)")
+                    cluster_id += 1
+            print(f"\n[Coreference Processing] Completed. Total clusters processed: {cluster_id}\n")
         
         roots = [node for node in nodes if node.head is None]
         for root in roots:
@@ -331,6 +388,7 @@ class Dependency:
         self.links_succ: dict[Node, list[Node]] = {}
         self.links_pred: dict[Node, Node] = {}
         self.relationship_sentences: dict[Node, str] = {}
+        self.correfence_map: dict[Node, Node] = {}
     
     def _fixup_lefts_rights_sentences(self, node: Node) -> None:
         node.children.sort(key=lambda n: n.index)
@@ -338,9 +396,9 @@ class Dependency:
         node.rights = [child for child in node.children if child.index > node.index]
         node.sentence_start = node.lefts[0].index if node.lefts else node.index
         node.sentence_end = node.rights[-1].index + 1 if node.rights else node.index + 1
-        print(f"Sentence of Node '{node.text}' [{node.sentence_start}, {node.sentence_end}): \n\t'{node.sentence}'")
+        # print(f"Sentence of Node '{node.text}' [{node.sentence_start}, {node.sentence_end}): \n\t'{node.sentence}'")
         node.sentence = self.doc[node.sentence_start : node.sentence_end]
-        print(f"Reset sentence of [{node.sentence_start}, {node.sentence_end}): \n\t'{node.sentence}'")
+        # print(f"Reset sentence of [{node.sentence_start}, {node.sentence_end}): \n\t'{node.sentence}'")
     
     def _calc_relationship_sentence(self, root: Node):
         left_edge = right_edge = root.index
@@ -391,23 +449,23 @@ class Dependency:
             # Reset the sentence start and end
             node.sentence_start = node.lefts[0].index if node.lefts else node.index
             node.sentence_end = node.rights[-1].index + 1 if node.rights else node.index + 1
-            print(f"Sentence of Node '{node.text}' [{node.sentence_start}, {node.sentence_end}): \n\t'{node.sentence}'")
+            # print(f"Sentence of Node '{node.text}' [{node.sentence_start}, {node.sentence_end}): \n\t'{node.sentence}'")
             node.sentence = self.doc[node.sentence_start : node.sentence_end]
-            print(f"Reset sentence of [{node.sentence_start}, {node.sentence_end}): \n\t'{node.sentence}'")
+            # print(f"Reset sentence of [{node.sentence_start}, {node.sentence_end}): \n\t'{node.sentence}'")
             if node.head:
                 node.head.children.sort(key=lambda n: n.index)
                 node.head.lefts = [child for child in node.head.children if child.index < node.head.index]
                 node.head.rights = [child for child in node.head.children if child.index > node.head.index]
                 node.head.sentence_start = node.head.lefts[0].index if node.head.lefts else node.head.index
                 node.head.sentence_end = node.head.rights[-1].index + 1 if node.head.rights else node.head.index + 1
-                print(f"Sentence of Head Node '{node.head.text}' [{node.head.sentence_start}, {node.head.sentence_end}): \n\t'{node.head.sentence}'")
+                # print(f"Sentence of Head Node '{node.head.text}' [{node.head.sentence_start}, {node.head.sentence_end}): \n\t'{node.head.sentence}'")
                 node.head.sentence = self.doc[node.head.sentence_start : node.head.sentence_end]
-                print(f"Reset sentence for Head Node [{node.head.sentence_start}, {node.head.sentence_end}): \n\t'{node.head.sentence}'")
+                # print(f"Reset sentence for Head Node [{node.head.sentence_start}, {node.head.sentence_end}): \n\t'{node.head.sentence}'")
         
         self.roots = [node for node in self.nodes if node.head is None]
-        print("Conjunctions solved. Resulting Nodes:")
-        for node in self.nodes:
-            print(f"{node}")
+        # print("Conjunctions solved. Resulting Nodes:")
+        # for node in self.nodes:
+        #     print(f"{node}")
         return self
     
     # PASS 2: Mark all the antecedent of pronouns.
@@ -424,14 +482,14 @@ class Dependency:
             
             node.head.children.remove(node)
             
-            print(f"Sentence is '{node.head.sentence}'")
+            # print(f"Sentence is '{node.head.sentence}'")
             node.head.lefts = [child for child in node.head.children if child.index < node.head.index]
             node.head.rights = [child for child in node.head.children if child.index > node.head.index]
             node.head.sentence_start = node.head.lefts[0].index if node.head.lefts else node.head.index
             node.head.sentence_end = node.head.rights[-1].index + 1 if node.head.rights else node.head.index + 1
             node.head.sentence = self.doc[node.head.sentence_start : node.head.sentence_end]
-            print(f"Reset sentence for Head Node [{node.head.sentence_start}, {node.head.sentence_end}): \n\t'{node.head.sentence}'")
-            print(f"Len of head children: {len(node.head.children)}, {node.head.children}")
+            # print(f"Reset sentence for Head Node [{node.head.sentence_start}, {node.head.sentence_end}): \n\t'{node.head.sentence}'")
+            # print(f"Len of head children: {len(node.head.children)}, {node.head.children}")
 
             node.dep = Dep.ROOT
             node.head = None
@@ -471,41 +529,68 @@ class Dependency:
     # 4. to be an adjective, i.e., pos == ADJ
     # 5. to be a numeric, i.e., pos == NUM
     # 6. to be a pronoun, i.e., pos == PRON
+    # Merge coreference nodes: nodes with same correfence_id share the same vertex (primary node)
     def mark_vertex(self): #
         for node in self.nodes:
             if node.dep in {Dep.nsubj, Dep.nsubjpass, Dep.csubj, Dep.csubjpass}:
                 node.dominator = True
+        correfence_primary_map: dict[int, Node] = {} # primary nodes
+        for node in self.nodes:
+            if node.correfence_id is not None and node.is_correfence_primary:
+                correfence_primary_map[node.correfence_id] = node
+        self.correfence_map: dict[Node, Node] = {} # not primary nodes
+        for node in self.nodes:
+            if node.correfence_id is not None and not node.is_correfence_primary:
+                if node.correfence_id in correfence_primary_map:
+                    self.correfence_map[node] = correfence_primary_map[node.correfence_id]
+        
+        # 先利用词性筛一遍，再加
+        vertex_candidates: list[Node] = []
         for node in self.nodes:
             if node.head is None:
-                node.is_vertex = True
+                vertex_candidates.append(node)
             elif node.ent != Entity.NOT_ENTITY:
-                node.is_vertex = True
+                vertex_candidates.append(node)
             elif node.pos in {Pos.NOUN, Pos.PROPN}:
-                node.is_vertex = True
+                vertex_candidates.append(node)
             elif node.pos in {Pos.VERB, Pos.AUX}:
-                node.is_vertex = True
+                vertex_candidates.append(node)
             elif node.pos == Pos.ADJ:
-                node.is_vertex = True
+                vertex_candidates.append(node)
             elif node.pos == Pos.NUM:
-                node.is_vertex = True
+                vertex_candidates.append(node)
             elif node.pos == Pos.PRON: 
-                node.is_vertex = True
+                vertex_candidates.append(node)
+        
+        # 对于有指代的节点，只有主节点作为顶点
+        for node in vertex_candidates:
+            if node.correfence_id is not None:
+                if node.is_correfence_primary:
+                    node.is_vertex = True
+                    self.vertexes.append(node)
             else:
-                continue
-            self.vertexes.append(node)
+                node.is_vertex = True
+                self.vertexes.append(node)
+        
         return self
     
     # PASS 5: Compress dependencies that only links vertex nodes.
     # We use links to record the compressed dependencies.
     # collect all the pred non-vertex nodes of a node between vertexes into `former_nodes`.
     def compress_dependencies(self):
+        for node in self.nodes:
+            if node.head and node.head in self.correfence_map:
+                node.head = self.correfence_map[node.head]
         for node in self.vertexes:
             if not node.head:
                 continue
             pred = node.head
             while pred and not pred.is_vertex:
-                node.former_nodes.insert(0, pred)  # insert at the head
-                pred = pred.head
+                if pred in self.correfence_map:
+                    pred = self.correfence_map[pred]
+                else:
+                    node.former_nodes.insert(0, pred)  # 插入到头部
+                    pred = pred.head
             if pred:
                 self.links_pred[node] = pred
                 if pred not in self.links_succ:
@@ -525,8 +610,8 @@ class Dependency:
                 return True
             return False
         
-        for node in self.vertexes:
-            print(f"Vertex Node: {node}")
+        # for node in self.vertexes:
+        #     print(f"Vertex Node: {node}")
         
         saved_rels: set[tuple[str, str]] = set()
         relationships: list[Relationship] = []
