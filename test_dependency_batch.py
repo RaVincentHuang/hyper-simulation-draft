@@ -74,8 +74,8 @@ for text in ctx_texts:
     # if cnt < now: # 这个是为啥？
         # cnt += 1
         # continue
-    if cnt > now:
-        continue
+    # if cnt > now:
+    #     continue
     vertices, rel, id_map = get_rel(nlp, text)
     res = ""
     for r in rel:
@@ -86,7 +86,7 @@ for text in ctx_texts:
             single_name[vid] = vertex.text
 
     for vertex in vertices:
-        res += f"Vertex: {vertex.text}, ID: {id_map[vertex]} ['{single_name[id_map[vertex]]}']"
+        res += f"Vertex: {vertex.text}, ID: {id_map[vertex]} ['{single_name[id_map[vertex]]}']\n"
 
     res += f"Squeezed rate is {len(single_name)}/{len(vertices)} = {len(single_name)/len(vertices):.2%}"
     with open(os.path.join(target_dir, f"{cnt}.txt"), "w", encoding="utf-8") as f:

@@ -112,7 +112,7 @@ class Hypergraph:
                 father_hyperedge = rel_to_hyperedge.get(rel.father)
                 if father_hyperedge:
                     hyperedge.father = father_hyperedge
-        
+            print(f"Hyperedge: {hyperedge.desc}, Father: {hyperedge.father.desc if hyperedge.father else None}")
         return Hypergraph(vertex_objs, hyperedges, doc)
     
     # use pickle to serialize and deserialize Hypergraph
