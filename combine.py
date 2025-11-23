@@ -186,12 +186,16 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
             span_end = token.i + 1
 
             for left in reversed(list(token.lefts)):
+                if left.i != span_start - 1:
+                    break
                 if left.dep_ in {"aux", "auxpass", "neg", "advmod"}:
                     span_start = left.i
                 else:
                     break
 
             for right in token.rights:
+                if right.i != span_end:
+                    break
                 if right.dep_ in {"prt", "advmod", "acomp", "xcomp", "ccomp"}:
                     span_end = right.i + 1
                 else:

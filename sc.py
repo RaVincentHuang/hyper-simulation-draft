@@ -439,8 +439,8 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
                 likely_nodes[node_q] = set()
             likely_nodes[node_q].add(node_d)
     
-    # for node_q in likely_nodes:
-    #     print(f"Query Node: {node_q.text()}, Likely Data Nodes: {[n.text() for n in likely_nodes[node_q]]}")
+    for node_q in likely_nodes:
+        print(f"Query Node: {node_q.text()}, Likely Data Nodes: {[n.text() for n in likely_nodes[node_q]]}")
     
     cluster_pairs: set[tuple[SemanticCluster, SemanticCluster, float]] = set()
     for u in query_hypergraph.vertices:
@@ -475,6 +475,10 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
             # cluster_pairs.(top_k)
             for triplet in top_k:
                 cluster_pairs.add(triplet)
+            print(f"Query Vertex Pair: ({u.text()}, {v.text()}), Top K: {len(top_k)}")
+            for qc, dc, score in top_k:
+                print(f"Query Cluster Text: {qc.text()}, Data Cluster Text: {dc.text()}, Score: {score:.4f}")
+                print("-----")
     
     # remove all same pairs
     ans_pairs = []
