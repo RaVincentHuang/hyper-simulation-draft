@@ -1,5 +1,5 @@
 *.whl
-# *.pkl
+*.pkl
 *.txt
 __pycache__/
 output_data/
