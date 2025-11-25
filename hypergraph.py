@@ -1,23 +1,110 @@
-from dependency import LocalDoc, Node, Pos, Relationship
-
+from dependency import LocalDoc, Node, Pos, Entity, Relationship
+import itertools
 
 class Vertex:
     def __init__(self, id: int, nodes: list[Node]):
         self.id = id
         self.nodes = nodes
+        self.poses: list[Pos] = [n.pos for n in nodes]
+        self.ents: list[Entity] = [n.ent for n in nodes]
+        # Deduplication for poses and ents
+        self.poses = list(set(self.poses))
+        self.ents = list(set(self.ents))
+        
+    def __hash__(self) -> int:
+        return hash(self.id)
+    
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Vertex):
+            return False
+        return self.id == other.id
         
     def pos_equal(self, pos: Pos) -> bool:
-        if not self.nodes:
+        if not len(self.poses):
             return False
-        return any(n.pos == pos for n in self.nodes)
+        return any(p == pos for p in self.poses)
+    
+    def pos_range(self, pos: Pos):
+        # we assume that if two pos in a set, the are in a range
+        # 1. AUX, VERB
+        # 2. NOUN, PROPN, PRON
+        # 3. CCONJ, SCONJ
+        # 4. PUNCT, SYM, X
+        if pos in {Pos.VERB, Pos.AUX}:
+            return any(p in {Pos.VERB, Pos.AUX} for p in self.poses)
+        elif pos in {Pos.NOUN, Pos.PROPN, Pos.PRON}:
+            return any(p in {Pos.NOUN, Pos.PROPN, Pos.PRON} for p in self.poses)
+        elif pos in {Pos.CCONJ, Pos.SCONJ}:
+            return any(p in {Pos.CCONJ, Pos.SCONJ} for p in self.poses)
+        elif pos in {Pos.PUNCT, Pos.SYM, Pos.X}:
+            return any(p in {Pos.PUNCT, Pos.SYM, Pos.X} for p in self.poses)
+        else:
+            return any(p == pos for p in self.poses)
+    
+    def ent_equal(self, ent: Entity) -> bool:
+        if not len(self.ents):
+            return False
+        return any(n.ent == ent for n in self.nodes)
+    
+    def ent_range(self, ent: Entity) -> bool:
+        # Same as pos_range
+        # 1. Person: PERSON, NORP
+        # 2. Location: NORP, GPE, LOC, FAC, ORG
+        # 3. Date/Time: DATE, TIME
+        # 4. Object: PRODUCT, WORK_OF_ART
+        # 5. Number: MONEY, PERCENT, QUANTITY, CARDINAL
+        # 6. Fact: EVENT, LAW, LANGUAGE
+        if ent in {Entity.PERSON, Entity.NORP}:
+            return any(n.ent in {Entity.PERSON, Entity.NORP} for n in self.nodes)
+        elif ent in {Entity.GPE, Entity.LOC, Entity.FAC, Entity.ORG, Entity.NORP}:
+            return any(n.ent in {Entity.GPE, Entity.LOC, Entity.FAC, Entity.ORG, Entity.NORP} for n in self.nodes)
+        elif ent in {Entity.DATE, Entity.TIME}:
+            return any(n.ent in {Entity.DATE, Entity.TIME} for n in self.nodes)
+        elif ent in {Entity.PRODUCT, Entity.WORK_OF_ART}:
+            return any(n.ent in {Entity.PRODUCT, Entity.WORK_OF_ART} for n in self.nodes)
+        elif ent in {Entity.MONEY, Entity.PERCENT, Entity.QUANTITY, Entity.CARDINAL}:
+            return any(n.ent in {Entity.MONEY, Entity.PERCENT, Entity.QUANTITY, Entity.CARDINAL} for n in self.nodes)
+        elif ent in {Entity.EVENT, Entity.LAW, Entity.LANGUAGE}:
+            return any(n.ent in {Entity.EVENT, Entity.LAW, Entity.LANGUAGE} for n in self.nodes)
+        else:
+            return any(n.ent == ent for n in self.nodes)
+    
+    def ent_same(self, other: 'Vertex') -> bool:
+        if not self.ents or not other.ents:
+            return False
+        return any(e1 == e2 for (e1, e2) in itertools.product(self.ents, other.ents))
         
     def pos_same(self, other: 'Vertex') -> bool:
-        if not self.nodes or not other.nodes:
+        if not self.poses or not other.poses:
             return False
-        return any(n1.pos == n2.pos for n1, n2 in zip(self.nodes, other.nodes))
+        return any(pos1 == pos2 for (pos1, pos2) in itertools.product(self.poses, other.poses))
+    
+    def is_domain(self, other: 'Vertex') -> bool:
+        # POS not range
+        if not any(self.pos_range(p) for p in other.poses):
+            return True
+        # ENT not range
+        if not any(self.ent_range(e) for e in other.ents):
+            return True
+        return False    
+
+    @staticmethod
+    def resolved_text(node: 'Node') -> str:
+        """Get resolved text for a node, handling coreference and pronoun antecedents."""
+        if node.resolved_text:
+            return node.resolved_text
+        # If node has a coref_primary, use its resolved_text
+        if node.coref_primary:
+            primary_resolved = node.coref_primary.resolved_text or node.coref_primary.text
+            return primary_resolved
+        if node.pos == Pos.PRON and node.pronoun_antecedent:
+            return node.pronoun_antecedent.resolved_text or node.pronoun_antecedent.text
+        return node.text
     
     def text(self) -> str:
-        return self.nodes[0].text if self.nodes else ""
+        if not self.nodes:
+            return ""
+        return Vertex.resolved_text(self.nodes[0])
     
     @staticmethod
     def from_nodes(vertices: list[Node], id_map: dict[Node, int]) -> list['Vertex']:

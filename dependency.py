@@ -192,17 +192,22 @@ class Node:
     def from_doc(doc) -> tuple[list['Node'], list['Node']]:
         nodes: list[Node] = []
         def _coref_primary_rank(node: 'Node') -> tuple[int, int, int, int]:
+            """Rank nodes for primary selection: higher score = better candidate.
+            Priority: VERB/AUX > NOUN/PROPN > ADJ > NUM > others > PRON"""
             ent_score = 1 if node.ent != Entity.NOT_ENTITY else 0
             pos_priority: dict[Pos, int] = {
-                Pos.PROPN: 5,
-                Pos.NOUN: 4,
-                Pos.ADJ: 3,
-                Pos.NUM: 3,
-                Pos.VERB: 2,
-                Pos.AUX: 2,
-                Pos.PRON: 0,
+                Pos.VERB: 10,      # Highest priority: verbs
+                Pos.AUX: 10,       # Highest priority: auxiliaries
+                Pos.NOUN: 8,       # Second: nouns
+                Pos.PROPN: 8,      # Second: proper nouns
+                Pos.ADJ: 6,        # Third: adjectives
+                Pos.NUM: 5,        # Fourth: numbers
+                Pos.ADV: 4,        # Fifth: adverbs
+                Pos.ADP: 3,        # Sixth: adpositions
+                Pos.PART: 2,       # Seventh: particles
+                Pos.PRON: 0,       # Lowest: pronouns
             }
-            pos_score = pos_priority.get(node.pos, 1)
+            pos_score = pos_priority.get(node.pos, 1)  # Default priority for other POS
             length_score = len(node.text)
             return (ent_score, pos_score, length_score, -node.index)
         wildcard_tags = {',', '.', '-LRB-', '-RRB-', '``', ':', "''", 'PRP$', 'WP$', '$'}
@@ -265,6 +270,16 @@ class Node:
                             cluster_token_set.add(node)
                 
                 if len(cluster_tokens) > 1:
+                    # Mark all cluster tokens with correfence_id
+                    for node in cluster_tokens:
+                        node.correfence_id = cluster_id
+                    
+                    # Skip if less than 2 nodes remain (coreference requires at least 2 entities)
+                    if len(cluster_tokens) < 2:
+                        print(f"    Skipping cluster {cluster_id}: only {len(cluster_tokens)} token node(s)")
+                        cluster_id += 1
+                        continue
+                    
                     # 确定主节点：找到在resolved_text中相同位置出现的文本
                     primary_text = None
                     primary_start = None
@@ -272,63 +287,87 @@ class Node:
                     for start, end in cluster:
                         span_text = text[start:end]
                         if span_text in resolved_text:
-                            resolved_pos = resolved_text.find(span_text)
-                            if resolved_pos != -1:
-                                primary_text = span_text
-                                primary_start = start
-                                primary_end = end
-                                break
-                    # if primary_text:
-                        # print(f"    Primary text: '{primary_text}' at [{primary_start}:{primary_end}]")
-                    # else:
-                        # print(f"    Warning: No primary text found for cluster {cluster_id}")
-                    primary_node: Node | None = None
-                    for node in cluster_tokens:
-                        node.correfence_id = cluster_id
-                        # Check if this node is in the primary span
-                        token = doc[node.index]
-                        token_start = token.idx
-                        token_end = token.idx + len(token.text)
-                        is_primary = not (token_end <= primary_start or token_start >= primary_end) if primary_start is not None and primary_end is not None else False
-                        if is_primary:
-                            node.is_correfence_primary = True
-                            primary_candidates.append(node)
-                        # print(f"      - Node '{node.text}' (index={node.index}): correfence_id={cluster_id}, is_primary={is_primary}")
+                            primary_text = span_text
+                            primary_start = start
+                            primary_end = end
+                            break
                     
-                    primary_text_for_replacement: str | None = None
-                    if primary_text:
-                        primary_text_for_replacement = primary_text
-                    elif cluster_texts:
-                        primary_text_for_replacement = cluster_texts[0]
-
-                    if primary_candidates:
-                        primary_node = max(primary_candidates, key=_coref_primary_rank)
-                        for candidate in primary_candidates:
-                            candidate.is_correfence_primary = candidate is primary_node
-                    if not primary_node and cluster_tokens:
-                        primary_node = max(cluster_tokens, key=_coref_primary_rank)
-                    if not primary_text_for_replacement and primary_node:
+                    # Select primary node from all cluster_tokens based on POS priority:
+                    # VERB/AUX > NOUN/PROPN > ADJ > NUM > others > PRON
+                    # Primary span is used as a tiebreaker, not a filter
+                    primary_node: Node | None = None
+                    
+                    # Calculate primary span info for tiebreaking
+                    primary_span_nodes = set()
+                    if primary_start is not None and primary_end is not None:
+                        for node in cluster_tokens:
+                            token = doc[node.index]
+                            token_start = token.idx
+                            token_end = token.idx + len(token.text)
+                            if not (token_end <= primary_start or token_start >= primary_end):
+                                primary_span_nodes.add(node)
+                    
+                    # Select primary node: prioritize by POS, use primary span as tiebreaker
+                    # Filter out particles (like "to") that are not meaningful as primary
+                    def _rank_with_span_preference(node: 'Node') -> tuple:
+                        base_rank = _coref_primary_rank(node)
+                        # Add bonus if in primary span (as tiebreaker)
+                        in_span_bonus = 1 if node in primary_span_nodes else 0
+                        # Penalize particles (like "to") that shouldn't be primary
+                        particle_penalty = -100 if node.pos == Pos.PART and node.text.lower() == "to" else 0
+                        # Return: (ent_score, pos_score + particle_penalty, in_span_bonus, length_score, -index)
+                        return (base_rank[0], base_rank[1] + particle_penalty, in_span_bonus, base_rank[2], base_rank[3])
+                    
+                    primary_node = max(cluster_tokens, key=_rank_with_span_preference)
+                    primary_node.is_correfence_primary = True
+                    
+                    # Set primary_text_for_replacement: 
+                    # For verbs, prefer lemma (e.g., "analyze" from "to analyze")
+                    # For other POS, use text
+                    if primary_node.pos in {Pos.VERB, Pos.AUX}:
+                        primary_text_for_replacement = primary_node.lemma
+                    else:
                         primary_text_for_replacement = primary_node.text
                     
+                    # Extract verb from merged tokens like "to analyze" -> "to analyze" (keep "to" for infinitive)
+                    def extract_verb_text(node: Node, doc) -> str:
+                        """Extract the verb from a merged token, keeping 'to' for infinitives."""
+                        if node.pos not in {Pos.VERB, Pos.AUX}:
+                            return node.text
+                        text = node.text.strip()
+                        # Handle "to <verb>" pattern: keep "to analyze" for infinitives
+                        if text.lower().startswith("to ") and len(text) > 3:
+                            # Keep the full "to analyze" form for infinitives
+                            return text
+                        # For other cases, try to use lemma if it's meaningful
+                        if node.lemma and node.lemma.lower() not in {"to", node.text.lower()}:
+                            return node.lemma
+                        return node.text
+                    
+                    # Set resolved_text and coref_primary for all cluster tokens
                     for node in cluster_tokens:
                         if node.is_correfence_primary:
-                            node.resolved_text = node.text
-                            continue
-                        if node.pos == Pos.PRON and primary_text_for_replacement:
+                            # For verbs, extract the actual verb (e.g., "analyze" from "to analyze")
+                            if node.pos in {Pos.VERB, Pos.AUX}:
+                                node.resolved_text = extract_verb_text(node, doc)
+                            else:
+                                node.resolved_text = node.text
+                        elif node.pos == Pos.PRON and primary_text_for_replacement:
                             node.resolved_text = primary_text_for_replacement
+                        
                         if primary_node:
                             node.coref_primary = primary_node
                             if node.pos == Pos.PRON and not node.pronoun_antecedent:
                                 node.pronoun_antecedent = primary_node
                         elif node.pos == Pos.PRON and not node.pronoun_antecedent:
                             node.pronoun_antecedent = None
-                    if primary_node:
-                        if not primary_text_for_replacement:
-                            primary_text_for_replacement = primary_node.text
-                        if not primary_node.resolved_text:
+                    
+                    # Ensure primary node has resolved_text
+                    if primary_node and not primary_node.resolved_text:
+                        if primary_node.pos in {Pos.VERB, Pos.AUX}:
+                            primary_node.resolved_text = extract_verb_text(primary_node, doc)
+                        else:
                             primary_node.resolved_text = primary_node.text
-                        if not primary_node.is_correfence_primary:
-                            primary_node.is_correfence_primary = True
                     
                     cluster_id += 1
                 else:
@@ -367,18 +406,10 @@ class Relationship:
         self.end = end + 1
         self.father: Relationship | None = None
 
-    @staticmethod
-    def _resolved_node_text(node: Node) -> str:
-        if node.resolved_text:
-            return node.resolved_text
-        if node.pos == Pos.PRON and node.coref_primary:
-            return node.coref_primary.text
-        if node.pos == Pos.PRON and node.pronoun_antecedent:
-            return node.pronoun_antecedent.text
-        return node.text
-
     def node_text(self, node: Node) -> str:
-        res = self._resolved_node_text(node)
+        # Import Vertex here to avoid circular import
+        from hypergraph import Vertex
+        res = Vertex.resolved_text(node)
 
         determiner_children: list[Node] = []
         for child in node.lefts:
@@ -386,7 +417,7 @@ class Relationship:
                 determiner_children.append(child)
         determiner_children.sort(key=lambda n: n.index)
         if determiner_children:
-            prefix = " ".join(self._resolved_node_text(child) for child in determiner_children)
+            prefix = " ".join(Vertex.resolved_text(child) for child in determiner_children)
             res = f"{prefix} {res}"
 
         return res
@@ -410,10 +441,12 @@ class Relationship:
         
         prefix, suffix = calc_prefix_suffix()
         
+        # Import Vertex here to avoid circular import
+        from hypergraph import Vertex
         sentence = str(self.sentence)
         for entity in self.entities[1:]:
             new_text = self.node_text(entity)
-            old_candidates = [entity.sentence, self._resolved_node_text(entity)]
+            old_candidates = [entity.sentence, Vertex.resolved_text(entity)]
             for old in old_candidates:
                 if old and old in sentence:
                     sentence = sentence.replace(old, new_text, 1)
@@ -422,12 +455,6 @@ class Relationship:
         sentence = sentence.replace(prefix, "").replace(suffix, "").strip()
         
         return sentence
-    
-    @staticmethod
-    def node_text_for_fuzzy(node: Node) -> str:
-        if node.pos == Pos.PRON and node.pronoun_antecedent:
-            return node.pronoun_antecedent.text.lower()
-        return node.text.lower()
 
     def __format__(self, format_spec: str) -> str:
         return f"[root: {self.node_text(self.root)}] ({', '.join([self.node_text(entity) for entity in self.entities])})\n\tIn Sentence: '{self.sentence}'\n\tSimple: '{self.relationship_text_simple()}'"
@@ -611,8 +638,10 @@ class Dependency:
     # We use links to record the compressed dependencies.
     # collect all the pred non-vertex nodes of a node between vertexes into `former_nodes`.
     def compress_dependencies(self):
+        # Preserve direct grammatical dependencies (dobj, nsubj, etc.) from coreference mapping
+        direct_grammatical_deps = {Dep.nsubj, Dep.dobj, Dep.pobj, Dep.attr, Dep.oprd, Dep.iobj}
         for node in self.nodes:
-            if node.head and node.head in self.correfence_map:
+            if node.head and node.head in self.correfence_map and node.dep not in direct_grammatical_deps:
                 node.head = self.correfence_map[node.head]
         for node in self.vertexes:
             if not node.head:
@@ -666,7 +695,12 @@ class Dependency:
             node = rel.root
             for succ in self.links_succ.get(node, []):
                 if succ in root_to_relationship:
-                    relationship_trees[root_to_relationship[succ]] = rel
+                    child_rel = root_to_relationship[succ]
+                    # Only set father relationship if the child's root is within the parent's sentence range
+                    # This prevents cross-sentence or semantically incorrect father relationships
+                    # caused by coreference mapping issues
+                    if (succ.sentence_start >= node.sentence_start and succ.sentence_end <= node.sentence_end):
+                        relationship_trees[child_rel] = rel
         
         for rel, father_rel in relationship_trees.items():
             rel.father = father_rel

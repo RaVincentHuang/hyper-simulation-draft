@@ -134,7 +134,7 @@ class SemanticCluster:
             node_pair = text_pair_to_node_pairs[text_pair]
             label = labels[i]
             node1, node2 = node_pair
-            if label == "entailment" or node1.pos_same(node2):
+            if label == "entailment" or (label == "neutral" and node1.is_domain(node2)):
                 if node1 not in likely_nodes:
                     likely_nodes[node1] = set()
                 likely_nodes[node1].add(node2)
@@ -160,9 +160,13 @@ class SemanticCluster:
         if len(self.vertices) > 0:
             return self.vertices
         vertex_set: set[Vertex] = set()
+        id_set = set()
         
         for he in self.hyperedges:
             for v in he.vertices:
+                if v.id in id_set:
+                    continue
+                id_set.add(v.id)
                 vertex_set.add(v)
         self.vertices = list(vertex_set)
         return self.vertices
@@ -217,6 +221,7 @@ class SemanticCluster:
         
         for (u, v), k in lca_map.items():
             # collect path from u to k
+            # print(f"Finding path between nodes '{u.text}' and '{v.text}', LCA is '{k.text}'")
             node_cnt = 1
             path_items: list[Node] = []
             current = u
@@ -323,10 +328,7 @@ class SemanticCluster:
             for node in nodes:
                 if node == root:
                     continue
-                if node.pos == Pos.PRON and node.pronoun_antecedent:
-                    node_text = node.pronoun_antecedent.text
-                else:
-                    node_text = node.text
+                node_text = Vertex.resolved_text(node)
                 replacement.append((node.sentence, node_text))
             
             replacement.append((prefix, ""))
@@ -434,13 +436,13 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
     
     likely_nodes: dict[Vertex, set[Vertex]] = {}
     for (node_q, node_d), label in node_pair_to_label.items():
-        if label != "contradiction":
+        if label == "entailment" or (label == "neutral" and node_q.is_domain(node_d)):
             if node_q not in likely_nodes:
                 likely_nodes[node_q] = set()
             likely_nodes[node_q].add(node_d)
     
-    for node_q in likely_nodes:
-        print(f"Query Node: {node_q.text()}, Likely Data Nodes: {[n.text() for n in likely_nodes[node_q]]}")
+    # for node_q in likely_nodes:
+        # print(f"Query Node: {node_q.text()}, Likely Data Nodes: {[n.text() for n in likely_nodes[node_q]]}")
     
     cluster_pairs: set[tuple[SemanticCluster, SemanticCluster, float]] = set()
     for u in query_hypergraph.vertices:
@@ -475,10 +477,10 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
             # cluster_pairs.(top_k)
             for triplet in top_k:
                 cluster_pairs.add(triplet)
-            print(f"Query Vertex Pair: ({u.text()}, {v.text()}), Top K: {len(top_k)}")
-            for qc, dc, score in top_k:
-                print(f"Query Cluster Text: {qc.text()}, Data Cluster Text: {dc.text()}, Score: {score:.4f}")
-                print("-----")
+            # print(f"Query Vertex Pair: ({u.text()}, {v.text()}), Top K: {len(top_k)}")
+            # for qc, dc, score in top_k:
+                # print(f"Query Cluster Text: {qc.text()}, Data Cluster Text: {dc.text()}, Score: {score:.4f}")
+                # print("-----")
     
     # remove all same pairs
     ans_pairs = []
@@ -511,14 +513,27 @@ def node_sequence_to_text(nodes: list[Node]) -> str:
     return " ".join(texts)
         
 
-def get_s_match(sc1: SemanticCluster, sc2: SemanticCluster) -> list[tuple[Vertex, Vertex]]:
+def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster) -> list[tuple[Vertex, Vertex]]:
     matches: list[tuple[Vertex, Vertex]] = []
-    sc1_vertices = list(filter(lambda v: v.pos_equal(Pos.VERB) or v.pos_equal(Pos.ADJ), sc1.get_vertices()))
-    sc2_vertices = list(filter(lambda v: v.pos_equal(Pos.VERB) or v.pos_equal(Pos.ADJ), sc2.get_vertices()))
+    sc1_vertices = list(filter(lambda v: not (v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX)), sc1.get_vertices()))
+    sc2_vertices = list(filter(lambda v: not (v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX)), sc2.get_vertices()))
+    
+    sc1_pairs: list[tuple[Vertex, Vertex]] = []
+    for i in range(len(sc1_vertices) - 1):
+        for j in range(i + 1, len(sc1_vertices)):
+            sc1_pairs.append((sc1_vertices[i], sc1_vertices[j]))
+            sc1_pairs.append((sc1_vertices[j], sc1_vertices[i]))
+            s1, _ = sc1.get_paths_between_vertices(sc1_vertices[i], sc1_vertices[j])
+            s2, _ = sc1.get_paths_between_vertices(sc1_vertices[j], sc1_vertices[i])
+            print(f"SC1 Vertex Pair: ({sc1_vertices[i].text()}, {sc1_vertices[j].text()}),\n S1: {s1}\n S2: {s2}")
+    sc2_pairs: list[tuple[Vertex, Vertex]] = []
+    for i in range(len(sc2_vertices) - 1):
+        for j in range(i + 1, len(sc2_vertices)):
+            sc2_pairs.append((sc2_vertices[i], sc2_vertices[j]))
+            sc2_pairs.append((sc2_vertices[j], sc2_vertices[i]))
+    
+    
     likely_nodes = SemanticCluster.likely_nodes(sc1_vertices, sc2_vertices)
-    
-    
-    
     
     
     return matches

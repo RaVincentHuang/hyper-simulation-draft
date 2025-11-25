@@ -141,12 +141,16 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
             span_end = token.i + 1
             
             for left in reversed(list(token.lefts)):
+                if left.i != span_start - 1:
+                    break
                 if left.dep_ in {"advmod", "neg", "nummod", "quantmod", "npadvmod", "amod", "compound"} or (left.dep_ == "det" and left.text.lower() not in not_naive_dets):
                     span_start = left.i
                 else:
                     break
 
             for right in token.rights:
+                if right.i != span_end:
+                    break
                 if right.dep_ in {"case", "advmod", "neg", "nummod", "quantmod", "npadvmod"}:
                     span_end = right.i + 1
                 else:
@@ -192,8 +196,9 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
                     span_start = left.i
                 else:
                     break
-
+            
             for right in token.rights:
+                # if right is not near the verb, break
                 if right.i != span_end:
                     break
                 if right.dep_ in {"prt", "advmod", "acomp", "xcomp", "ccomp"}:
@@ -206,6 +211,7 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
             if ent_token_idxs.intersection(range(span.start, span.end)):
                 continue
             
+            print(f"Verbal phrase span: {span}")
             spans_to_merge.append(span)
             ent_token_idxs.update(range(span.start, span.end))
 
@@ -216,12 +222,16 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
             span_end = token.i + 1
 
             for left in reversed(list(token.lefts)):
+                if left.i != span_start - 1:
+                    break
                 if left.dep_ in {"advmod", "neg"}:
                     span_start = left.i
                 else:
                     break
 
             for right in token.rights:
+                if right.i != span_end:
+                    break
                 if right.dep_ in {"advmod", "acomp", "prep", "conj", "cc", "det"}:
                     span_end = right.i + 1
                 else:
