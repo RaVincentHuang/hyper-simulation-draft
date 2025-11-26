@@ -173,7 +173,7 @@ class SemanticCluster:
     def get_vertices(self) -> list[Vertex]:
         if len(self.vertices) > 0:
             return self.vertices
-        vertex_set: list[Vertex] = []
+        vertex_set: set[Vertex] = set()
         id_set = set()
         
         for he in self.hyperedges:
@@ -181,8 +181,8 @@ class SemanticCluster:
                 if v.id in id_set:
                     continue
                 id_set.add(v.id)
-                vertex_set.append(v)
-        self.vertices = vertex_set
+                vertex_set.add(v)
+        self.vertices = list(vertex_set)
         return self.vertices
     
     def get_paths_between_vertices(self, v1: Vertex, v2: Vertex) -> tuple[str, int]:
@@ -207,7 +207,7 @@ class SemanticCluster:
                 u = nodes_in_vertices_list[i]
                 v = nodes_in_vertices_list[j]
                 queries.append((u, v))
-
+        
         edge_between_nodes: list[tuple[Node, Node]] = []
         saved_nodes: set[Node] = set()
         for he in self.hyperedges:
@@ -225,7 +225,7 @@ class SemanticCluster:
                 current = head
                 head = head.head
             saved_nodes.add(root)
-                
+                    
         lca_results = TarjanLCA(edge_between_nodes, queries).lca()
         
         lca_map: dict[tuple[Node, Node], Node] = {}
@@ -349,10 +349,7 @@ class SemanticCluster:
             for node in nodes:
                 if node == root:
                     continue
-                if node.pos == Pos.PRON and node.pronoun_antecedent:
-                    node_text = node.pronoun_antecedent.text
-                else:
-                    node_text = node.text
+                node_text = Vertex.resolved_text(node)
                 replacement.append((node.sentence, node_text))
             
             replacement.append((prefix, ""))
@@ -457,7 +454,7 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
     for i, text_pair in enumerate(text_pairs):
         node_pair = text_pair_to_node_pairs[text_pair]
         node_pair_to_label[node_pair] = labels[i]
-    # ['contradiction', 'entailment', 'neutral']
+    
     likely_nodes: dict[Vertex, set[Vertex]] = {}
     for (node_q, node_d), label in node_pair_to_label.items():
         if label == "entailment" or (label == "neutral" and node_q.is_domain(node_d)):
@@ -466,7 +463,7 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
             likely_nodes[node_q].add(node_d)
     
     # for node_q in likely_nodes:
-    #     print(f"Query Node: {node_q.text()}, Likely Data Nodes: {[n.text() for n in likely_nodes[node_q]]}")
+        # print(f"Query Node: {node_q.text()}, Likely Data Nodes: {[n.text() for n in likely_nodes[node_q]]}")
     
     cluster_pairs: set[tuple[SemanticCluster, SemanticCluster, float]] = set()
     for u in query_hypergraph.vertices:
@@ -501,6 +498,10 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
             # cluster_pairs.(top_k)
             for triplet in top_k:
                 cluster_pairs.add(triplet)
+            # print(f"Query Vertex Pair: ({u.text()}, {v.text()}), Top K: {len(top_k)}")
+            # for qc, dc, score in top_k:
+                # print(f"Query Cluster Text: {qc.text()}, Data Cluster Text: {dc.text()}, Score: {score:.4f}")
+                # print("-----")
     
     # remove all same pairs
     ans_pairs = []

@@ -6,8 +6,12 @@ output_data/
 select_data/
 test_data/
 new/
+<<<<<<< HEAD
 HippoRAG/
 .vscode/
 .pytest_cache/
 .env/
 __pycache__/
+=======
+HippoRAG/
+>>>>>>> e079f85f642978f7f9236be488124d5a7ee2ac3c
