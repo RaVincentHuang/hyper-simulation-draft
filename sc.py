@@ -8,55 +8,64 @@ from nli import get_nli_labels_batch
 
 class TarjanLCA:
     def __init__(self, edges: list[tuple[Node, Node]], queries: list[tuple[Node, Node]]) -> None:
-        # build adjacency list (undirected) and node set
+        # build adjacency list (directed) and node set
         self.adj: dict[Node, list[Node]] = {}
         self.nodes: set[Node] = set()
+        
+        # [修复逻辑 1] 统计入度，用于寻找有向图/树的根节点
+        in_degree: dict[Node, int] = {}
+
         for a, b in edges:
             self.nodes.add(a)
             self.nodes.add(b)
             if a not in self.adj:
                 self.adj[a] = []
-            if b not in self.adj:
-                self.adj[b] = []
             self.adj[a].append(b)
-            self.adj[b].append(a)
+            
+            # 初始化入度
+            if a not in in_degree: in_degree[a] = 0
+            if b not in in_degree: in_degree[b] = 0
+            in_degree[b] += 1
 
         # store queries and build per-node query map
         self.queries = list(queries)
         self.query_map: dict[Node, list[tuple[Node, int]]] = {}
+        
         for i, (u, v) in enumerate(self.queries):
-            # queries are undirected for LCA
-            if u not in self.query_map:
-                self.query_map[u] = []
-            if v not in self.query_map:
-                self.query_map[v] = []
-            self.query_map[u].append((v, i))
-            self.query_map[v].append((u, i))
+            # 确保查询中的节点也被加入 nodes 集合（防止孤立节点报错）
+            self.nodes.add(u)
+            self.nodes.add(v)
+            if u not in in_degree: in_degree[u] = 0
+            if v not in in_degree: in_degree[v] = 0
 
+            # [修复逻辑 2] 建立双向映射
+            # Tarjan 算法是离线的，当遍历到 u 时，如果 v 已经访问过，则计算结果。
+            # 因为不知道 DFS 先到 u 还是 v，所以两边都要存。
+            if u not in self.query_map: self.query_map[u] = []
+            if v not in self.query_map: self.query_map[v] = []
+            
+            self.query_map[u].append((v, i))
+            # 即使 u==v，存两遍也不影响正确性，但为了逻辑严谨可以加判断
+            if u != v:
+                self.query_map[v].append((u, i))
+        
         # union-find parent and ancestor used by Tarjan's algorithm
         self.uf_parent: dict[Node, Node] = {}
         self.ancestor: dict[Node, Node] = {}
         self.visited: set[Node] = set()
         self.res: list[Node | None] = [None] * len(self.queries)
 
-        # initialize union-find for nodes that appear in edges or queries
+        # initialize union-find for all nodes
         for n in list(self.nodes):
             self.uf_parent[n] = n
             self.ancestor[n] = n
 
-        # also include nodes that appear only in queries
-        for u, v in self.queries:
-            if u not in self.uf_parent:
-                self.uf_parent[u] = u
-                self.ancestor[u] = u
-                self.nodes.add(u)
-            if v not in self.uf_parent:
-                self.uf_parent[v] = v
-                self.ancestor[v] = v
-                self.nodes.add(v)
-
         # run Tarjan on each component (forest support)
-        for n in list(self.nodes):
+        # [修复逻辑 3] 优先从根节点（入度为0）开始 DFS
+        # 如果随机从子节点开始，会导致并查集结构错误
+        sorted_nodes = sorted(list(self.nodes), key=lambda n: in_degree.get(n, 0))
+        
+        for n in sorted_nodes:
             if n not in self.visited:
                 self.tarjan(n, None)
         
@@ -82,22 +91,27 @@ class TarjanLCA:
     def tarjan(self, u, p):
         # standard Tarjan's offline LCA DFS
         # set ancestor of u to u
-        self.ancestor[u] = u
+        self.ancestor[u] = u # 实际上 init 已经做了，但这步为了逻辑清晰保留
+        
         # visit children (neighbors excluding parent)
+        # 注意：因为是有向图，adj[u] 存的本来就是 children，不需要排除 p
+        # 但保留 p 参数不影响逻辑
         for v in self.adj.get(u, []):
-            if v == p:
+            if v == p: 
                 continue
             if v in self.visited:
-                # already processed in this component
                 continue
+            
             self.tarjan(v, u)
             self.union(u, v)
+            # 关键：合并后将集合代表的 ancestor 指回当前节点 u
             self.ancestor[self.find(u)] = u
 
         # mark u visited
         self.visited.add(u)
 
         # answer queries attached to u whenever the other node is already visited
+        # 因为 map 现在是双向的，所以这里能正确处理
         for other, qi in self.query_map.get(u, []):
             if other in self.visited:
                 self.res[qi] = self.ancestor[self.find(other)]
@@ -181,7 +195,7 @@ class SemanticCluster:
         nodes_in_vertices: set[Node] = set()
         for he in self.hyperedges:
             for v in he.vertices:
-                if v.pos_equal(Pos.VERB) or v.pos_equal(Pos.ADJ):
+                if v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX):
                     continue
                 nodes_in_vertices.add(he.current_node(v))
                 node_vertex[he.current_node(v)] = v
@@ -195,19 +209,22 @@ class SemanticCluster:
                 queries.append((u, v))
         
         edge_between_nodes: list[tuple[Node, Node]] = []
+        saved_nodes: set[Node] = set()
         for he in self.hyperedges:
             root = he.current_node(he.root)
             for i in range(1, len(he.vertices)):
                 node = he.current_node(he.vertices[i])
-                if node not in nodes_in_vertices:
-                    continue
-                current = node
-                while current and current != root:
-                    edge_between_nodes.append((root, current))
-                    if current.head:
-                        current = current.head
-                    else:
-                        break
+                edge_between_nodes.append((root, node))
+                saved_nodes.add(node) # HINT
+            head = root.head
+            current = root
+            while head:
+                edge_between_nodes.append((head, current))
+                if head in saved_nodes:
+                    break
+                current = head
+                head = head.head
+            saved_nodes.add(root)
                     
         lca_results = TarjanLCA(edge_between_nodes, queries).lca()
         
@@ -221,25 +238,29 @@ class SemanticCluster:
         
         for (u, v), k in lca_map.items():
             # collect path from u to k
-            # print(f"Finding path between nodes '{u.text}' and '{v.text}', LCA is '{k.text}'")
             node_cnt = 1
             path_items: list[Node] = []
             current = u
+            # current_trace: list[str] = []
             while current != k:
+                # current_trace.append(current.text)
                 if current in nodes_in_vertices:
                     node_cnt += 1
                 path_items.append(current)
-                assert current.head is not None, f"Node {current.text} has no head while tracing to LCA {k.text}"
+                assert current.head is not None, f"Node '{current.text}' has no head while tracing to LCA '{k.text}', current trace: {' -> '.join([])}"
                 current = current.head
+                
             path_items.append(k)
             # collect path from v to k
             rev_path_items: list[Node] = []
             current = v
+            # current_trace: list[str] = []
             while current != k:
+                # current_trace.append(current.text)
                 if current in nodes_in_vertices:
                     node_cnt += 1
                 rev_path_items.append(current)
-                assert current.head is not None, f"Node {current.text} has no head while tracing to LCA {k.text}"
+                assert current.head is not None, f"Node '{current.text}' has no head while tracing to LCA '{k.text}', current trace: {' -> '.join([])}"
                 current = current.head
             rev_path_items = rev_path_items[::-1]
             path_items.extend(rev_path_items)

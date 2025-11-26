@@ -48,8 +48,8 @@
 _model_cache = {}
 
 def get_nli_labels_batch(pairs: list[tuple[str, str]]) -> list[str]:
-    from sentence_transformers import CrossEncoder
     if 'nli-deberta-v3-base' not in _model_cache:
+        from sentence_transformers import CrossEncoder
         _model_cache['nli-deberta-v3-base'] = CrossEncoder('cross-encoder/nli-deberta-v3-base')
     model = _model_cache['nli-deberta-v3-base']
     scores = model.predict(pairs)

@@ -86,8 +86,8 @@ class Vertex:
         # ENT not range
         if not any(self.ent_range(e) for e in other.ents):
             return True
-        return False    
-
+        return False
+    
     @staticmethod
     def resolved_text(node: 'Node') -> str:
         """Get resolved text for a node, handling coreference and pronoun antecedents."""
@@ -199,7 +199,7 @@ class Hypergraph:
                 father_hyperedge = rel_to_hyperedge.get(rel.father)
                 if father_hyperedge:
                     hyperedge.father = father_hyperedge
-            print(f"Hyperedge: {hyperedge.desc}, Father: {hyperedge.father.desc if hyperedge.father else None}")
+        
         return Hypergraph(vertex_objs, hyperedges, doc)
     
     # use pickle to serialize and deserialize Hypergraph
