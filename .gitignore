@@ -1,0 +1,13 @@
+*.whl
+*.pkl
+*.txt
+__pycache__/
+output_data/
+select_data/
+test_data/
+new/
+HippoRAG/
+.vscode/
+.pytest_cache/
+.env/
+__pycache__/
