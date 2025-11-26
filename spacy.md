@@ -164,11 +164,8 @@ for token in doc:
 `​​iobj​​` | Indirect Object | 间接宾语 | She gave ​​him​​ a gift. |
 `​pobj​​` | Prepositional Object | 介词宾语 | She sat ​​on​​ ​​the chair​​.(chair是on的宾语) |
 `​​dative​​` | Dative | 与格（类似间接宾语） | He spoke ​​to me​​.(me是to的宾语) |
-<<<<<<< HEAD
-=======
-
->>>>>>> e079f85f642978f7f9236be488124d5a7ee2ac3c
 **修饰关系**
+
 | 标签 | 全称 | 描述 | 示例 |
 | ---- | ---- | ---- | ---- |
 `​amod​​` | Adjectival Modifier | 形容词修饰名词 | a ​​red​​ apple | ​

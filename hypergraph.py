@@ -1,5 +1,8 @@
-from dependency import LocalDoc, Node, Pos, Entity, Relationship
+from platform import node
+from dependency import LocalDoc, Node, Pos, Entity, Relationship, Dep
 import itertools
+
+import index
 
 class Vertex:
     def __init__(self, id: int, nodes: list[Node]):
@@ -143,6 +146,38 @@ class Hyperedge:
             if node.index >= self.start and node.index <= self.end:
                 return node
         assert False, f"Vertex does not contain a node in hyperedge range, Vertex nodes: {vertex.nodes}, Hyperedge range: {self.start}-{self.end}, Hyperedge is {self.desc}"
+        
+    def is_sub_vertex(self, vertex1: Vertex, vertex2: Vertex) -> bool:
+        # check if vertex1 is a sub-vertex of vertex2 in this hyperedge
+        if vertex1 == self.root:
+            return True
+        if vertex2 == self.root:
+            return False
+        node1 = self.current_node(vertex1)
+        node2 = self.current_node(vertex2)
+        # b is sub-vertex of a if:
+        
+        subjects_dep = {Dep.nsubj, Dep.nsubjpass, Dep.csubj, Dep.csubjpass, Dep.agent, Dep.expl}
+        objects_dep = {Dep.dobj, Dep.iobj, Dep.pobj, Dep.dative, Dep.attr, Dep.oprd, Dep.pcomp}
+        main_concept_dep =  subjects_dep | objects_dep
+        
+        assert not (node1.dep in subjects_dep and node2.dep in subjects_dep), f"Both nodes are subjects '{node1.text}' and '{node2.text}'"
+        
+        if node1.dep in subjects_dep and node2.dep not in subjects_dep:
+            return True
+        if node2.dep in subjects_dep and node1.dep not in subjects_dep:
+            return False
+        
+        assert not (node1.dep in main_concept_dep and node2.dep in main_concept_dep), f"Both nodes are main '{node1.text}' and '{node2.text}'"
+        
+        if node1.dep in main_concept_dep and node2.dep not in main_concept_dep:
+            return True
+        if node2.dep in main_concept_dep and node1.dep not in main_concept_dep:
+            return False
+        
+        if node1.index < node2.index:
+            return True
+        return False
 
     @staticmethod
     def form_relationship(relationship: Relationship, vertex_map: dict[Node, Vertex]) -> 'Hyperedge':
