@@ -83,11 +83,11 @@ class Vertex:
         return any(pos1 == pos2 for (pos1, pos2) in itertools.product(self.poses, other.poses))
     
     def is_domain(self, other: 'Vertex') -> bool:
-        # POS not range
-        if not any(self.pos_range(p) for p in other.poses):
+        # POS range
+        if any(self.pos_range(p) for p in other.poses):
             return True
-        # ENT not range
-        if not any(self.ent_range(e) for e in other.ents):
+        # ENT range
+        if any(self.ent_range(e) for e in other.ents):
             return True
         return False
     
@@ -146,7 +146,27 @@ class Hyperedge:
             if node.index >= self.start and node.index <= self.end:
                 return node
         assert False, f"Vertex does not contain a node in hyperedge range, Vertex nodes: {vertex.nodes}, Hyperedge range: {self.start}-{self.end}, Hyperedge is {self.desc}"
+    
+    def have_no_link(self, vertex1: Vertex, vertex2: Vertex) -> bool:
+        if vertex1 == self.root:
+            return True
+        if vertex2 == self.root:
+            return False
+        node1 = self.current_node(vertex1)
+        node2 = self.current_node(vertex2)
         
+        subjects_dep = {Dep.nsubj, Dep.nsubjpass, Dep.csubj, Dep.csubjpass, Dep.agent, Dep.expl}
+
+        if node1.dep in subjects_dep and node2.dep in subjects_dep:
+            return True
+        objects_dep = {Dep.dobj, Dep.iobj, Dep.pobj, Dep.dative, Dep.attr, Dep.oprd, Dep.pcomp}
+        main_concept_dep =  subjects_dep | objects_dep
+        
+        if node1.dep in main_concept_dep and node2.dep in main_concept_dep:
+            return True
+        
+        return False
+    
     def is_sub_vertex(self, vertex1: Vertex, vertex2: Vertex) -> bool:
         # check if vertex1 is a sub-vertex of vertex2 in this hyperedge
         if vertex1 == self.root:
@@ -161,14 +181,14 @@ class Hyperedge:
         objects_dep = {Dep.dobj, Dep.iobj, Dep.pobj, Dep.dative, Dep.attr, Dep.oprd, Dep.pcomp}
         main_concept_dep =  subjects_dep | objects_dep
         
-        assert not (node1.dep in subjects_dep and node2.dep in subjects_dep), f"Both nodes are subjects '{node1.text}' and '{node2.text}'"
+        assert not (node1.dep in subjects_dep and node2.dep in subjects_dep), f"Both nodes are subjects '{node1.text}' ({node1.dep.name}) and '{node2.text}' ({node2.dep.name})"
         
         if node1.dep in subjects_dep and node2.dep not in subjects_dep:
             return True
         if node2.dep in subjects_dep and node1.dep not in subjects_dep:
             return False
         
-        assert not (node1.dep in main_concept_dep and node2.dep in main_concept_dep), f"Both nodes are main '{node1.text}' and '{node2.text}'"
+        assert not (node1.dep in main_concept_dep and node2.dep in main_concept_dep), f"Both nodes are main '{node1.text}' ({node1.dep.name}) and '{node2.text}' ({node2.dep.name})"
         
         if node1.dep in main_concept_dep and node2.dep not in main_concept_dep:
             return True
