@@ -1,10 +1,12 @@
+import itertools
+from os import path
 from hypergraph import Hyperedge, Hypergraph, Node, Vertex, LocalDoc, Path
 from dependency import LocalDoc, Node, Pos
 import numpy as np
 
-from embedding import get_embedding_batch, cosine_similarity
+from embedding import get_embedding_batch, cosine_similarity, get_similarity_batch, get_similarity
 
-from nli import get_nli_labels_batch
+from nli import get_nli_label, get_nli_labels_batch
 
 class TarjanLCA:
     def __init__(self, edges: list[tuple[Node, Node]], queries: list[tuple[Node, Node]]) -> None:
@@ -12,7 +14,7 @@ class TarjanLCA:
         self.adj: dict[Node, list[Node]] = {}
         self.nodes: set[Node] = set()
         
-        # [修复逻辑 1] 统计入度，用于寻找有向图/树的根节点
+        # 统计入度，用于寻找有向图/树的根节点
         in_degree: dict[Node, int] = {}
 
         for a, b in edges:
@@ -32,28 +34,27 @@ class TarjanLCA:
         self.query_map: dict[Node, list[tuple[Node, int]]] = {}
         
         for i, (u, v) in enumerate(self.queries):
-            # 确保查询中的节点也被加入 nodes 集合（防止孤立节点报错）
             self.nodes.add(u)
             self.nodes.add(v)
             if u not in in_degree: in_degree[u] = 0
             if v not in in_degree: in_degree[v] = 0
 
-            # [修复逻辑 2] 建立双向映射
-            # Tarjan 算法是离线的，当遍历到 u 时，如果 v 已经访问过，则计算结果。
-            # 因为不知道 DFS 先到 u 还是 v，所以两边都要存。
+            # 建立双向映射
             if u not in self.query_map: self.query_map[u] = []
             if v not in self.query_map: self.query_map[v] = []
             
             self.query_map[u].append((v, i))
-            # 即使 u==v，存两遍也不影响正确性，但为了逻辑严谨可以加判断
             if u != v:
                 self.query_map[v].append((u, i))
-        
+
         # union-find parent and ancestor used by Tarjan's algorithm
         self.uf_parent: dict[Node, Node] = {}
         self.ancestor: dict[Node, Node] = {}
         self.visited: set[Node] = set()
         self.res: list[Node | None] = [None] * len(self.queries)
+
+        # [新增逻辑] 用于记录节点属于哪棵树（哪个连通分量）
+        self.node_roots: dict[Node, Node] = {}
 
         # initialize union-find for all nodes
         for n in list(self.nodes):
@@ -61,17 +62,16 @@ class TarjanLCA:
             self.ancestor[n] = n
 
         # run Tarjan on each component (forest support)
-        # [修复逻辑 3] 优先从根节点（入度为0）开始 DFS
-        # 如果随机从子节点开始，会导致并查集结构错误
+        # 优先从根节点（入度为0）开始 DFS
         sorted_nodes = sorted(list(self.nodes), key=lambda n: in_degree.get(n, 0))
         
         for n in sorted_nodes:
             if n not in self.visited:
-                self.tarjan(n, None)
+                # [修改逻辑] 传入当前分量的根节点 n 作为 root_id
+                self.tarjan(n, None, n)
         
     # union-find's find
     def find(self, x):
-        # path compression
         if x not in self.uf_parent:
             self.uf_parent[x] = x
             return x
@@ -85,39 +85,36 @@ class TarjanLCA:
         ry = self.find(y)
         if rx == ry:
             return
-        # attach ry under rx
         self.uf_parent[ry] = rx
     
-    def tarjan(self, u, p):
-        # standard Tarjan's offline LCA DFS
-        # set ancestor of u to u
-        self.ancestor[u] = u # 实际上 init 已经做了，但这步为了逻辑清晰保留
+    # [修改接口] 增加 root_id 参数，标记当前递归属于哪棵树
+    def tarjan(self, u, p, root_id):
+        # [新增逻辑] 记录当前节点所属的树根
+        self.node_roots[u] = root_id
+
+        self.ancestor[u] = u 
         
-        # visit children (neighbors excluding parent)
-        # 注意：因为是有向图，adj[u] 存的本来就是 children，不需要排除 p
-        # 但保留 p 参数不影响逻辑
         for v in self.adj.get(u, []):
             if v == p: 
                 continue
             if v in self.visited:
                 continue
             
-            self.tarjan(v, u)
+            # [修改逻辑] 递归传递 root_id
+            self.tarjan(v, u, root_id)
             self.union(u, v)
-            # 关键：合并后将集合代表的 ancestor 指回当前节点 u
             self.ancestor[self.find(u)] = u
 
-        # mark u visited
         self.visited.add(u)
 
-        # answer queries attached to u whenever the other node is already visited
-        # 因为 map 现在是双向的，所以这里能正确处理
         for other, qi in self.query_map.get(u, []):
+            # [修复核心] 只有当 other 也被访问过，且 other 属于同一棵树（同一个 root_id）时，才计算 LCA
+            # 如果属于不同的树，说明不连通，LCA 保持为 None
             if other in self.visited:
-                self.res[qi] = self.ancestor[self.find(other)]
+                if self.node_roots.get(other) == root_id:
+                    self.res[qi] = self.ancestor[self.find(other)]
 
     def lca(self) -> list[Node | None]:
-        # return the results of all queries
         return self.res
 
 class SemanticCluster:
@@ -225,42 +222,48 @@ class SemanticCluster:
                 current = head
                 head = head.head
             saved_nodes.add(root)
+            
+        # for (u, v) in edge_between_nodes:
+        #     print(f"Edge: '{u.text} ({u.index})' -> '{v.text} ({v.index})'")
                     
         lca_results = TarjanLCA(edge_between_nodes, queries).lca()
+        
         
         lca_map: dict[tuple[Node, Node], Node] = {}
         for i, (u, v) in enumerate(queries):
             lca_node = lca_results[i]
             if lca_node:
+                # print(f"LCA of '{u.text} ({u.index})' and '{v.text} ({v.index})' is '{lca_node.text} ({lca_node.index})'")
                 lca_map[(u, v)] = lca_node
         
         node_paths: dict[tuple[Vertex, Vertex], list[tuple[str, int]]] = {}
         
         for (u, v), k in lca_map.items():
             # collect path from u to k
+            # print(f"Collecting path between '{u.text} ({u.index})' and '{v.text} ({v.index})', LCA is '{k.text} ({k.index})'")
             node_cnt = 1
             path_items: list[Node] = []
             current = u
-            # current_trace: list[str] = []
+            current_trace: list[str] = []
             while current != k:
-                # current_trace.append(current.text)
+                current_trace.append(current.text)
                 if current in nodes_in_vertices:
                     node_cnt += 1
                 path_items.append(current)
-                assert current.head is not None, f"Node '{current.text}' has no head while tracing to LCA '{k.text}', current trace: {' -> '.join([])}"
+                assert current.head is not None, f"Node '{current.text}' has no head while tracing to LCA '{k.text}', current trace: {' -> '.join(current_trace)}"
                 current = current.head
                 
             path_items.append(k)
             # collect path from v to k
             rev_path_items: list[Node] = []
             current = v
-            # current_trace: list[str] = []
+            current_trace: list[str] = []
             while current != k:
-                # current_trace.append(current.text)
+                current_trace.append(current.text)
                 if current in nodes_in_vertices:
                     node_cnt += 1
                 rev_path_items.append(current)
-                assert current.head is not None, f"Node '{current.text}' has no head while tracing to LCA '{k.text}', current trace: {' -> '.join([])}"
+                assert current.head is not None, f"Node '{current.text}' has no head while tracing to LCA '{k.text}', current trace: {' -> '.join(current_trace)}"
                 current = current.head
             rev_path_items = rev_path_items[::-1]
             path_items.extend(rev_path_items)
@@ -534,27 +537,174 @@ def node_sequence_to_text(nodes: list[Node]) -> str:
     return " ".join(texts)
         
 
-def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster) -> list[tuple[Vertex, Vertex]]:
+def _legal_path(s1: str, cnt1: int, s2: str, cnt2: int) -> bool:
+    # legal if s1 == s2 or (cnt1 > 2 and cnt2 > 2)
+    if get_nli_label(s1, s2) != "contradiction":
+        return True
+    return False
+
+def _legal_vertices(v1: Vertex, v2: Vertex) -> bool:
+    label = get_nli_label(v1.text(), v2.text())
+    if label == "entailment" or v1.is_domain(v2):
+        return True
+    return False
+
+def _path_score(s1: str, cnt1: int, s2: str, cnt2: int, path_score_cache: dict[tuple[str, str], float]) -> float:
+    if (s1, s2) in path_score_cache:
+        sim = path_score_cache[(s1, s2)]
+    else:
+        sim = get_similarity(s1, s2)
+        path_score_cache[(s1, s2)] = sim
+    return sim / (cnt1 + cnt2)
+
+def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster, score_threshold: float=0.0) -> list[tuple[Vertex, Vertex, float]]:
     matches: list[tuple[Vertex, Vertex]] = []
     sc1_vertices = list(filter(lambda v: not (v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX)), sc1.get_vertices()))
     sc2_vertices = list(filter(lambda v: not (v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX)), sc2.get_vertices()))
     
-    sc1_pairs: list[tuple[Vertex, Vertex]] = []
-    for i in range(len(sc1_vertices) - 1):
-        for j in range(i + 1, len(sc1_vertices)):
-            sc1_pairs.append((sc1_vertices[i], sc1_vertices[j]))
-            sc1_pairs.append((sc1_vertices[j], sc1_vertices[i]))
-            s1, _ = sc1.get_paths_between_vertices(sc1_vertices[i], sc1_vertices[j])
-            s2, _ = sc1.get_paths_between_vertices(sc1_vertices[j], sc1_vertices[i])
-            print(f"SC1 Vertex Pair: ({sc1_vertices[i].text()}, {sc1_vertices[j].text()}),\n S1: {s1}\n S2: {s2}")
-    sc2_pairs: list[tuple[Vertex, Vertex]] = []
-    for i in range(len(sc2_vertices) - 1):
-        for j in range(i + 1, len(sc2_vertices)):
-            sc2_pairs.append((sc2_vertices[i], sc2_vertices[j]))
-            sc2_pairs.append((sc2_vertices[j], sc2_vertices[i]))
+    sc1_edges: list[tuple[Vertex, Vertex]] = []
+    for he in sc1.hyperedges:
+        for i in range(len(he.vertices) - 1):
+            for j in range(i + 1, len(he.vertices)):
+                if he.vertices[i].pos_equal(Pos.VERB) or he.vertices[i].pos_equal(Pos.AUX):
+                    continue
+                if he.vertices[j].pos_equal(Pos.VERB) or he.vertices[j].pos_equal(Pos.AUX):
+                    continue
+                if he.is_sub_vertex(he.vertices[i], he.vertices[j]):
+                    sc1_edges.append((he.vertices[i], he.vertices[j]))
+                else:
+                    sc1_edges.append((he.vertices[j], he.vertices[i]))
+                    
+    index_map: dict[Vertex, int] = {}
+    for e in sc1.hyperedges:
+        for v in e.vertices:
+            if v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX):
+                continue
+            if v not in index_map:
+                index_map[v] = e.current_node(v).index
     
+    sc1_pairs : list[tuple[Vertex, Vertex]] = []
+    # all (u, v) in sc1_edges are in sc1_pairs, and if (u, k), (k, v) in sc1_edges, then (u, v) is also in sc1_pairs
+    # calculate then recursively
+    added = True
+    for u, v in sc1_edges:
+        sc1_pairs.append((u, v))
+    while added:
+        added = False
+        current_pairs = sc1_pairs.copy()
+        for u1, v1 in current_pairs:
+            for u2, v2 in current_pairs:
+                if v1 == u2:
+                    new_pair = (u1, v2)
+                    if new_pair not in sc1_pairs:
+                        sc1_pairs.append(new_pair)
+                        added = True
+    
+    sc1_paths: dict[tuple[Vertex, Vertex], tuple[str, int]] = {}
+    sc1_is_textual_inverse: set[tuple[Vertex, Vertex]] = set()
+    for u, v in sc1_pairs:
+        s, cnt = sc1.get_paths_between_vertices(u, v)
+        sc1_paths[(u, v)] = (s, cnt)
+        if index_map[u] > index_map[v]:
+            sc1_is_textual_inverse.add((u, v))
     
     likely_nodes = SemanticCluster.likely_nodes(sc1_vertices, sc2_vertices)
     
+    sc2_pairs: list[tuple[Vertex, Vertex]] = []
+    sc2_paths: dict[tuple[Vertex, Vertex], tuple[str, int]] = {}
     
-    return matches
+    for u, u_prime in sc1_pairs:
+        for v, v_prime in itertools.product(likely_nodes.get(u, set()), likely_nodes.get(u_prime, set())):
+            s1, cnt1 = sc1_paths[(u, u_prime)]
+            if (v, v_prime) in sc2_paths:
+                s2, cnt2 = sc2_paths[(v, v_prime)]
+            else:
+                s2, cnt2 = sc2.get_paths_between_vertices(v, v_prime)
+            if _legal_path(s1, cnt1, s2, cnt2):
+                sc2_pairs.append((v, v_prime))
+                sc2_paths[(v, v_prime)] = (s2, cnt2)
+    
+    match_scores: dict[tuple[Vertex, Vertex], float] = {}
+    
+    for u, v in itertools.product(sc1_vertices, sc2_vertices):
+        if _legal_vertices(u, v):
+            matches.append((u, v))
+    
+    in_paths_of_sc1: dict[Vertex, list[tuple[str, int]]] = {}
+    out_paths_of_sc1: dict[Vertex, list[tuple[str, int]]] = {}
+    for u, v in sc1_pairs:
+        if v not in in_paths_of_sc1:
+            in_paths_of_sc1[v] = []
+        in_paths_of_sc1[v].append(sc1_paths[(u, v)])
+        if u not in out_paths_of_sc1:
+            out_paths_of_sc1[u] = []
+        out_paths_of_sc1[u].append(sc1_paths[(u, v)])
+        
+    in_paths_of_sc2: dict[Vertex, list[tuple[str, int]]] = {}
+    out_paths_of_sc2: dict[Vertex, list[tuple[str, int]]] = {}
+    for u, v in sc2_pairs:
+        if v not in in_paths_of_sc2:
+            in_paths_of_sc2[v] = []
+        in_paths_of_sc2[v].append(sc2_paths[(u, v)])
+        if u not in out_paths_of_sc2:
+            out_paths_of_sc2[u] = []
+        out_paths_of_sc2[u].append(sc2_paths[(u, v)])
+    
+    path_score_cache: dict[tuple[str, str], float] = {}
+    path_pair_need_to_calc: set[tuple[str, str]] = set()
+    for u, v in matches:
+        for s1, cnt1 in in_paths_of_sc1.get(u, []):
+            for s2, cnt2 in in_paths_of_sc2.get(v, []):
+                key = (s1, s2)
+                path_pair_need_to_calc.add(key)
+        for s1, cnt1 in out_paths_of_sc1.get(u, []):
+            for s2, cnt2 in out_paths_of_sc2.get(v, []):
+                key = (s1, s2)
+                path_pair_need_to_calc.add(key)
+    
+    path_list_1: list[str] = []
+    path_list_2: list[str] = []
+    for s1, s2 in path_pair_need_to_calc:
+        path_list_1.append(s1)
+        path_list_2.append(s2)
+    similarities = get_similarity_batch(path_list_1, path_list_2)
+    for i, (s1, s2) in enumerate(path_pair_need_to_calc):
+        path_score_cache[(s1, s2)] = similarities[i]
+    
+    for u, v in matches:
+        in_score = 0.0
+        out_score = 0.0
+        in_cnt = 0
+        out_cnt = 0
+        for s1, cnt1 in in_paths_of_sc1.get(u, []):
+            for s2, cnt2 in in_paths_of_sc2.get(v, []):
+                in_score += _path_score(s1, cnt1, s2, cnt2, path_score_cache)
+                in_cnt += 1
+        for s1, cnt1 in out_paths_of_sc1.get(u, []):
+            for s2, cnt2 in out_paths_of_sc2.get(v, []):
+                out_score += _path_score(s1, cnt1, s2, cnt2, path_score_cache)
+                out_cnt += 1
+        # in_score are the average by all in_path pairs
+        if in_cnt > 0:
+            in_score /= in_cnt
+        if out_cnt > 0:
+            out_score /= out_cnt
+        match_scores[(u, v)] = in_score + out_score
+        
+    # filter by score_threshold
+    matches = list(filter(lambda pair: match_scores.get(pair, 0.0) >= score_threshold, matches))
+    
+    # delete the matches that if (u, v1) and (u, v2) in matches and v1 != v2, keep only the one with highest score
+    final_matches: list[tuple[Vertex, Vertex, float]] = []
+    matches_by_u: dict[Vertex, list[tuple[Vertex, float]]]  = {}
+    for u, v in matches:
+        score = match_scores.get((u, v), 0.0)
+        if u not in matches_by_u:
+            matches_by_u[u] = []
+        matches_by_u[u].append((v, score))
+    for u, v_scores in matches_by_u.items():
+        v_scores = sorted(v_scores, key=lambda x: x[1], reverse=True)
+        best_v, best_score = v_scores[0]
+        final_matches.append((u, best_v, best_score))
+    
+    return final_matches

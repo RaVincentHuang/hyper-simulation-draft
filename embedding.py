@@ -1,5 +1,5 @@
 from sentence_transformers import SentenceTransformer
-from modelscope import AutoModel, AutoTokenizer
+from modelscope import AutoModel, AutoTokenizer, AutoModelForCausalLM
 import torch
 from torch import Tensor
 import torch.nn.functional as F
@@ -60,3 +60,18 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     a_norm = a / np.linalg.norm(a)
     b_norm = b / np.linalg.norm(b)
     return float(np.dot(a_norm, b_norm))
+
+def get_similarity_batch(query: list[str], data: list[str], N: int=8) -> list[float]:
+    query_embeddings = get_embedding_batch(query, N)
+    data_embeddings = get_embedding_batch(data, N)
+    similarities = []
+    for q_emb in query_embeddings:
+        for d_emb in data_embeddings:
+            sim = cosine_similarity(q_emb, d_emb)
+            similarities.append(sim)
+    return similarities
+
+def get_similarity(text1: str, text2: str) -> float:
+    emb1 = get_embedding_batch([text1])[0]
+    emb2 = get_embedding_batch([text2])[0]
+    return cosine_similarity(emb1, emb2)

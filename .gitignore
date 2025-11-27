@@ -4,10 +4,11 @@
 __pycache__/
 .vscode/
 .pytest_cache/
-test*.py
 output_data/
 select_data/
 test_data/
 new/
 HippoRAG/
+test*.py
+
 test*.py

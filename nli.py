@@ -57,6 +57,10 @@ def get_nli_labels_batch(pairs: list[tuple[str, str]]) -> list[str]:
     labels = [label_mapping[score_max] for score_max in scores.argmax(axis=1)]
     return labels
 
+def get_nli_label(text1: str, text2: str) -> str:
+    labels = get_nli_labels_batch([(text1, text2)])
+    return labels[0]
+
 if __name__ == "__main__":
     from transformers import AutoTokenizer, AutoModelForSequenceClassification
     import torch
