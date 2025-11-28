@@ -143,6 +143,7 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
             for left in reversed(list(token.lefts)):
                 if left.i != span_start - 1:
                     break
+                # {"advmod", "neg", "nummod", "quantmod", "npadvmod", "amod", "compound"} or {"advmod", "neg", "nummod", "quantmod", "npadvmod"}
                 if left.dep_ in {"advmod", "neg", "nummod", "quantmod", "npadvmod", "amod", "compound"} or (left.dep_ == "det" and left.text.lower() not in not_naive_dets):
                     span_start = left.i
                 else:

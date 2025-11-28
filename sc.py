@@ -1,7 +1,8 @@
 import itertools
 from os import path
+import re
 from hypergraph import Hyperedge, Hypergraph, Node, Vertex, LocalDoc, Path
-from dependency import LocalDoc, Node, Pos
+from dependency import LocalDoc, Node, Pos, Dep
 import numpy as np
 
 from embedding import get_embedding_batch, cosine_similarity, get_similarity_batch, get_similarity
@@ -247,7 +248,6 @@ class SemanticCluster:
                     
         lca_results = TarjanLCA(edge_between_nodes, queries).lca()
         
-        
         lca_map: dict[tuple[Node, Node], Node] = {}
         for i, (u, v) in enumerate(queries):
             lca_node = lca_results[i]
@@ -260,6 +260,21 @@ class SemanticCluster:
         for (u, v), k in lca_map.items():
             # collect path from u to k
             # print(f"Collecting path between '{u.text} ({u.index})' and '{v.text} ({v.index})', LCA is '{k.text} ({k.index})'")
+            vertex_u = node_vertex[u]
+            vertex_v = node_vertex[v]
+            if u == k:
+                text = f"#A -{v.dep.name}-> #B"
+                if (vertex_u, vertex_v) not in node_paths:
+                    node_paths[(vertex_u, vertex_v)] = []
+                node_paths[(vertex_u, vertex_v)].append((text, 1))
+                continue
+            elif v == k:
+                text = f"#A <-{u.dep.name}- #B"
+                if (vertex_u, vertex_v) not in node_paths:
+                    node_paths[(vertex_u, vertex_v)] = []
+                node_paths[(vertex_u, vertex_v)].append((text, 1))
+                continue
+            
             node_cnt = 1
             path_items: list[Node] = []
             current = u
@@ -287,21 +302,24 @@ class SemanticCluster:
             rev_path_items = rev_path_items[::-1]
             path_items.extend(rev_path_items)
             text = node_sequence_to_text(path_items)
-            vertex_u = node_vertex[u]
-            vertex_v = node_vertex[v]
+            text_inv = text.replace("#A", "#TEMP").replace("#B", "#A").replace("#TEMP", "#B")
             if (vertex_u, vertex_v) not in node_paths:
                 node_paths[(vertex_u, vertex_v)] = []
             node_paths[(vertex_u, vertex_v)].append((text, node_cnt))
             if (vertex_v, vertex_u) not in node_paths:
                 node_paths[(vertex_v, vertex_u)] = []
-            node_paths[(vertex_v, vertex_u)].append((text, node_cnt))
+            node_paths[(vertex_v, vertex_u)].append((text_inv, node_cnt))
             
         # select the shortest path
         for (vertex_u, vertex_v), paths in node_paths.items():
             paths = sorted(paths, key=lambda x: x[1])
             self.vertices_paths[(vertex_u, vertex_v)] = paths[0]
         
-        return self.vertices_paths.setdefault(key, ("", 0))
+        # return self.vertices_paths.setdefault(key, ("", 0))
+        if self.vertices_paths.get(key):
+            return self.vertices_paths[key]
+        else:
+            return ("", 0)
         
     
     def text(self) -> str:
@@ -487,7 +505,7 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
     for i, sc in enumerate(single_cluster_d):
         sc.embedding = np.array(embeddings_d[i])
     
-    N_STEP = -1
+    N_STEP = 4
     
     text_pair_to_node_pairs: dict[tuple[str, str], tuple[Vertex, Vertex]] = {}
     for node_q in sorted(query_hypergraph.vertices, key=_vertex_sort_key):
@@ -583,9 +601,9 @@ def node_sequence_to_text(nodes: list[Node]) -> str:
     texts = []
     for node in nodes:
         if node == start:
-            texts.append("A")
+            texts.append("#A")
         elif node == end:
-            texts.append("B")
+            texts.append("#B")
         elif node.pos in {Pos.ADV, Pos.ADJ, Pos.DET}:
             continue
         elif node.pos in {Pos.NOUN, Pos.PROPN, Pos.PRON}:
@@ -595,11 +613,31 @@ def node_sequence_to_text(nodes: list[Node]) -> str:
     return " ".join(texts)
         
 
-def _legal_path(s1: str, cnt1: int, s2: str, cnt2: int) -> bool:
-    # legal if s1 == s2 or (cnt1 > 2 and cnt2 > 2)
-    if get_nli_label(s1, s2) != "contradiction":
+def _formal_text_of(root: Node, node: Node) -> str:
+    match (root.pos, node.dep):
+        case (Pos.AUX, Dep.nsubj) | (Pos.AUX, Dep.nsubjpass):
+            text = "#A is something"
+        case (Pos.AUX, Dep.iobj) | (Pos.AUX, Dep.dobj):
+            text = "#A is something"
+        case (Pos.VERB, Dep.nsubj) | (Pos.VERB, Dep.nsubjpass):
+            text = "#A does something"
+        case (Pos.VERB, Dep.iobj) | (Pos.VERB, Dep.dobj):
+            text = "Someone does #A"
+        case _:
+            text = f"#A -{node.dep.name}-> something"
+    return text
+
+def _better_path(s1: str, s2: str, s2_inv: str) -> bool:
+    nli_labels = {"entailment": 3, "neutral": 2, "contradiction": 1}
+    label1 = get_nli_label(s1, s2)
+    label2 = get_nli_label(s1, s2_inv)
+    if nli_labels[label1] > nli_labels[label2]: # s2 is better
         return True
-    return False
+    
+    sim1 = get_similarity(s1, s2)
+    sim2 = get_similarity(s1, s2_inv)
+    return sim1 > sim2 
+    
 
 def _legal_vertices(v1: Vertex, v2: Vertex) -> bool:
     label = get_nli_label(v1.text(), v2.text())
@@ -615,24 +653,36 @@ def _path_score(s1: str, cnt1: int, s2: str, cnt2: int, path_score_cache: dict[t
         path_score_cache[(s1, s2)] = sim
     return sim / (cnt1 + cnt2)
 
+def _get_matched_vertices(vertices1: list[Vertex], vertices2: list[Vertex]) -> dict[Vertex, set[Vertex]]:
+    matched_vertices: dict[Vertex, set[Vertex]] = {}
+    text_pair_to_node_pairs: dict[tuple[str, str], tuple[Vertex, Vertex]] = {}
+    for node1 in vertices1:
+        for node2 in vertices2:
+            text_pair_to_node_pairs[(node1.text(), node2.text())] = (node1, node2)
+    text_pairs = list(text_pair_to_node_pairs.keys())
+    labels = get_nli_labels_batch(text_pairs)
+    for i, text_pair in enumerate(text_pairs):
+        node_pair = text_pair_to_node_pairs[text_pair]
+        label = labels[i]
+        node1, node2 = node_pair
+        if label == "entailment" or node1.is_domain(node2):
+            if node1 not in matched_vertices:
+                matched_vertices[node1] = set()
+            matched_vertices[node1].add(node2)
+    return matched_vertices
+
 def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster, score_threshold: float=0.0) -> list[tuple[Vertex, Vertex, float]]:
     matches: list[tuple[Vertex, Vertex]] = []
+    
+    # for v in sc1.get_vertices():
+    #     print(f"SC1 Vertex: '{v.text()}', POS: {v.poses}, ENT: {v.ents}")
+        
+    # for v in sc2.get_vertices():
+    #     print(f"SC2 Vertex: '{v.text()}', POS: {v.poses}, ENT: {v.ents}")
+    
     sc1_vertices = list(filter(lambda v: not (v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX)), sc1.get_vertices()))
     sc2_vertices = list(filter(lambda v: not (v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX)), sc2.get_vertices()))
     
-    sc1_edges: list[tuple[Vertex, Vertex]] = []
-    for he in sc1.hyperedges:
-        for i in range(len(he.vertices) - 1):
-            for j in range(i + 1, len(he.vertices)):
-                if he.vertices[i].pos_equal(Pos.VERB) or he.vertices[i].pos_equal(Pos.AUX):
-                    continue
-                if he.vertices[j].pos_equal(Pos.VERB) or he.vertices[j].pos_equal(Pos.AUX):
-                    continue
-                if he.is_sub_vertex(he.vertices[i], he.vertices[j]):
-                    sc1_edges.append((he.vertices[i], he.vertices[j]))
-                else:
-                    sc1_edges.append((he.vertices[j], he.vertices[i]))
-                    
     index_map: dict[Vertex, int] = {}
     for e in sc1.hyperedges:
         for v in e.vertices:
@@ -640,6 +690,24 @@ def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster, score_threshold: flo
                 continue
             if v not in index_map:
                 index_map[v] = e.current_node(v).index
+                
+    for e in sc2.hyperedges:
+        for v in e.vertices:
+            if v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX):
+                continue
+            if v not in index_map:
+                index_map[v] = e.current_node(v).index
+    
+    sc1_edges: list[tuple[Vertex, Vertex]] = []
+    for he in sc1.hyperedges:
+        for i in range(len(he.vertices) - 1):
+            for j in range(i + 1, len(he.vertices)):
+                if he.have_no_link(he.vertices[i], he.vertices[j]):
+                    continue
+                if he.is_sub_vertex(he.vertices[i], he.vertices[j]):
+                    sc1_edges.append((he.vertices[i], he.vertices[j]))
+                else:
+                    sc1_edges.append((he.vertices[j], he.vertices[i]))
     
     sc1_pairs : list[tuple[Vertex, Vertex]] = []
     # all (u, v) in sc1_edges are in sc1_pairs, and if (u, k), (k, v) in sc1_edges, then (u, v) is also in sc1_pairs
@@ -658,30 +726,55 @@ def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster, score_threshold: flo
                         sc1_pairs.append(new_pair)
                         added = True
     
+    def _is_pair_in_vertices(u: Vertex, v: Vertex) -> bool:
+        if u.pos_equal(Pos.VERB) or u.pos_equal(Pos.AUX):
+            return False
+        if v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX):
+            return False
+        return True
+    
+    sc1_pairs = list(filter(lambda pairs: _is_pair_in_vertices(pairs[0], pairs[1]), sc1_pairs))
+    
     sc1_paths: dict[tuple[Vertex, Vertex], tuple[str, int]] = {}
-    sc1_is_textual_inverse: set[tuple[Vertex, Vertex]] = set()
     for u, v in sc1_pairs:
         s, cnt = sc1.get_paths_between_vertices(u, v)
+        if cnt == 0:
+            continue
         sc1_paths[(u, v)] = (s, cnt)
-        if index_map[u] > index_map[v]:
-            sc1_is_textual_inverse.add((u, v))
     
-    likely_nodes = SemanticCluster.likely_nodes(sc1_vertices, sc2_vertices)
+    likely_nodes = _get_matched_vertices(sc1_vertices, sc2_vertices)
+    
     
     sc2_pairs: list[tuple[Vertex, Vertex]] = []
     sc2_paths: dict[tuple[Vertex, Vertex], tuple[str, int]] = {}
     
     for u, u_prime in sc1_pairs:
         for v, v_prime in itertools.product(likely_nodes.get(u, set()), likely_nodes.get(u_prime, set())):
+            if v == v_prime:
+                continue
+            # print(f"Compare ({u.text()}, {u_prime.text()}) with ({v.text()}, {v_prime.text()})")
             s1, cnt1 = sc1_paths[(u, u_prime)]
-            if (v, v_prime) in sc2_paths:
-                s2, cnt2 = sc2_paths[(v, v_prime)]
-            else:
-                s2, cnt2 = sc2.get_paths_between_vertices(v, v_prime)
-            if _legal_path(s1, cnt1, s2, cnt2):
+            
+            s2, cnt2 = sc2.get_paths_between_vertices(v, v_prime)
+            s2_inv, cnt2_prime = sc2.get_paths_between_vertices(v_prime, v)
+            if cnt2 == 0 or s2 == "":
+                sc2_pairs.append((v_prime, v))
+                sc2_paths[(v_prime, v)] = (s2_inv, cnt2)
+                continue
+            elif cnt2_prime == 0 or s2_inv == "":
                 sc2_pairs.append((v, v_prime))
                 sc2_paths[(v, v_prime)] = (s2, cnt2)
-    
+                continue
+            assert s2 != "" and s2_inv != "", f"Both paths between '{v.text()}' and '{v_prime.text()}' are empty."
+            # print(f"{s1} <-> {s2} || {s2_inv}")
+            if _better_path(s1, s2, s2_inv):
+                sc2_pairs.append((v, v_prime))
+                sc2_paths[(v, v_prime)] = (s2, cnt2)
+                
+            else:
+                sc2_pairs.append((v_prime, v))
+                sc2_paths[(v_prime, v)] = (s2_inv, cnt2)
+
     match_scores: dict[tuple[Vertex, Vertex], float] = {}
     
     for u, v in itertools.product(sc1_vertices, sc2_vertices):
@@ -697,7 +790,14 @@ def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster, score_threshold: flo
         if u not in out_paths_of_sc1:
             out_paths_of_sc1[u] = []
         out_paths_of_sc1[u].append(sc1_paths[(u, v)])
-        
+    
+    for vertex in sc1_vertices:
+        if vertex in in_paths_of_sc1:
+            print(f"SC1 Vertex '{vertex.text()}' In Paths: {[s for s, _ in in_paths_of_sc1[vertex]]}")
+        if vertex in out_paths_of_sc1:
+            print(f"SC1 Vertex '{vertex.text()}' Out Paths: {[s for s, _ in out_paths_of_sc1[vertex]]}")
+    
+    
     in_paths_of_sc2: dict[Vertex, list[tuple[str, int]]] = {}
     out_paths_of_sc2: dict[Vertex, list[tuple[str, int]]] = {}
     for u, v in sc2_pairs:
@@ -708,47 +808,101 @@ def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster, score_threshold: flo
             out_paths_of_sc2[u] = []
         out_paths_of_sc2[u].append(sc2_paths[(u, v)])
     
+    for vertex in sc2_vertices:
+        if vertex in in_paths_of_sc2:
+            print(f"SC2 Vertex '{vertex.text()}' In Paths: {[s for s, _ in in_paths_of_sc2[vertex]]}")
+        if vertex in out_paths_of_sc2:
+            print(f"SC2 Vertex '{vertex.text()}' Out Paths: {[s for s, _ in out_paths_of_sc2[vertex]]}")
+    
+    root_path_of_sc1: dict[Vertex, list[tuple[str, int]]] = {}
+    for e in sc1.hyperedges:
+        root = e.root
+        root_node = e.current_node(root)
+        if not (root_node.pos == Pos.VERB or root_node.pos == Pos.AUX):
+            continue
+        # print(f"SC1 Hyperedge Root: '{root_node.text}', POS: {root_node.pos.name}")
+        for v in e.vertices[1:]:
+            v_node = e.current_node(v)
+            if v_node.pos == Pos.VERB or v_node.pos == Pos.AUX:
+                continue
+            text = _formal_text_of(root_node, v_node)
+            if v not in root_path_of_sc1:
+                root_path_of_sc1[v] = []
+            root_path_of_sc1[v].append((text, 2))
+    root_path_of_sc2: dict[Vertex, list[tuple[str, int]]] = {}
+    for e in sc2.hyperedges:
+        root = e.root
+        root_node = e.current_node(root)
+        if not (root_node.pos == Pos.VERB or root_node.pos == Pos.AUX):
+            continue
+        # print(f"SC2 Hyperedge Root: '{root_node.text}', POS: {root_node.pos.name}")
+        for v in e.vertices[1:]:
+            v_node = e.current_node(v)
+            if v_node.pos == Pos.VERB or v_node.pos == Pos.AUX:
+                continue
+            text = _formal_text_of(root_node, v_node)
+            if v not in root_path_of_sc2:
+                root_path_of_sc2[v] = []
+            root_path_of_sc2[v].append((text, 2))
+
+    
     path_score_cache: dict[tuple[str, str], float] = {}
     path_pair_need_to_calc: set[tuple[str, str]] = set()
     for u, v in matches:
         for s1, cnt1 in in_paths_of_sc1.get(u, []):
             for s2, cnt2 in in_paths_of_sc2.get(v, []):
-                key = (s1, s2)
-                path_pair_need_to_calc.add(key)
+                if (s1, s2) not in path_score_cache:
+                    path_pair_need_to_calc.add((s1, s2))
         for s1, cnt1 in out_paths_of_sc1.get(u, []):
             for s2, cnt2 in out_paths_of_sc2.get(v, []):
-                key = (s1, s2)
-                path_pair_need_to_calc.add(key)
+                if (s1, s2) not in path_score_cache:
+                    path_pair_need_to_calc.add((s1, s2))
+        for s1, cnt1 in root_path_of_sc1.get(u, []):
+            for s2, cnt2 in root_path_of_sc2.get(v, []):
+                if (s1, s2) not in path_score_cache:
+                    path_pair_need_to_calc.add((s1, s2))
+
     
-    path_pairs: list[tuple[str, str]] = sorted(path_pair_need_to_calc)
     path_list_1: list[str] = []
     path_list_2: list[str] = []
-    for s1, s2 in path_pairs:
+    path_pair_need_to_calc_list = list(path_pair_need_to_calc)
+    for s1, s2 in path_pair_need_to_calc_list:
         path_list_1.append(s1)
         path_list_2.append(s2)
     similarities = get_similarity_batch(path_list_1, path_list_2)
-    for i, (s1, s2) in enumerate(path_pairs):
+    for i, (s1, s2) in enumerate(path_pair_need_to_calc_list):
         path_score_cache[(s1, s2)] = similarities[i]
     
     for u, v in matches:
         in_score = 0.0
-        out_score = 0.0
         in_cnt = 0
-        out_cnt = 0
         for s1, cnt1 in in_paths_of_sc1.get(u, []):
             for s2, cnt2 in in_paths_of_sc2.get(v, []):
                 in_score += _path_score(s1, cnt1, s2, cnt2, path_score_cache)
                 in_cnt += 1
+        if in_cnt > 0:
+            in_score /= in_cnt
+
+        out_score = 0.0
+        out_cnt = 0
         for s1, cnt1 in out_paths_of_sc1.get(u, []):
             for s2, cnt2 in out_paths_of_sc2.get(v, []):
                 out_score += _path_score(s1, cnt1, s2, cnt2, path_score_cache)
                 out_cnt += 1
-        # in_score are the average by all in_path pairs
-        if in_cnt > 0:
-            in_score /= in_cnt
         if out_cnt > 0:
             out_score /= out_cnt
-        match_scores[(u, v)] = in_score + out_score
+            
+        root_score = 0.0
+        root_cnt = 0
+        for s1, cnt1 in root_path_of_sc1.get(u, []):
+            for s2, cnt2 in root_path_of_sc2.get(v, []):
+                root_score += _path_score(s1, cnt1, s2, cnt2, path_score_cache)
+                # print(f"Root Path Score between '{s1}' and '{s2}': {_path_score(s1, cnt1, s2, cnt2, path_score_cache):.4f}")
+                root_cnt += 1
+        if root_cnt > 0:
+            root_score /= root_cnt
+        
+        match_scores[(u, v)] = in_score + out_score + root_score
         
     # filter by score_threshold
     matches = list(filter(lambda pair: match_scores.get(pair, 0.0) >= score_threshold, matches))
