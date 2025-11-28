@@ -8,6 +8,25 @@ from embedding import get_embedding_batch, cosine_similarity, get_similarity_bat
 
 from nli import get_nli_label, get_nli_labels_batch
 
+
+def _vertex_sort_key(vertex: Vertex) -> tuple[int, str]:
+    return (vertex.id, vertex.text())
+
+
+def _hyperedge_signature(hyperedge: Hyperedge) -> tuple[int, int, int, str]:
+    root_id = hyperedge.root.id if hyperedge.root else -1
+    return (root_id, hyperedge.start, hyperedge.end, hyperedge.desc)
+
+
+def _path_sort_key(path: Path) -> tuple:
+    sig = [_hyperedge_signature(he) for he in path.hyperedges]
+    return (len(path.hyperedges), sig)
+
+
+def _cluster_sort_key(cluster: 'SemanticCluster') -> tuple:
+    return cluster.signature()
+
+
 class TarjanLCA:
     def __init__(self, edges: list[tuple[Node, Node]], queries: list[tuple[Node, Node]]) -> None:
         # build adjacency list (directed) and node set
@@ -130,6 +149,7 @@ class SemanticCluster:
         self.node_paths_cache: dict[tuple[Node, Node], tuple[str, int]] = {}
         
         self.is_query = is_query
+        self._signature: tuple | None = None
         
     @staticmethod
     def likely_nodes(nodes1: list[Vertex], nodes2: list[Vertex]) -> dict[Vertex, set[Vertex]]:
@@ -170,16 +190,15 @@ class SemanticCluster:
     def get_vertices(self) -> list[Vertex]:
         if len(self.vertices) > 0:
             return self.vertices
-        vertex_set: set[Vertex] = set()
-        id_set = set()
-        
+        id_set: set[int] = set()
+        ordered_vertices: list[Vertex] = []
         for he in self.hyperedges:
             for v in he.vertices:
                 if v.id in id_set:
                     continue
                 id_set.add(v.id)
-                vertex_set.add(v)
-        self.vertices = list(vertex_set)
+                ordered_vertices.append(v)
+        self.vertices = ordered_vertices
         return self.vertices
     
     def get_paths_between_vertices(self, v1: Vertex, v2: Vertex) -> tuple[str, int]:
@@ -371,6 +390,31 @@ class SemanticCluster:
         self.text_cache = text
         return text
 
+    def _build_signature(self) -> tuple:
+        if not self.hyperedges:
+            return ()
+        items = []
+        for he in self.hyperedges:
+            root_id = he.root.id if he.root else -1
+            items.append((root_id, he.start, he.end, he.desc))
+        items.sort()
+        return tuple(items)
+
+    def signature(self) -> tuple:
+        if self._signature is None:
+            self._signature = self._build_signature()
+        return self._signature
+
+    def __hash__(self) -> int:
+        return hash((self.is_query, self.signature()))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, SemanticCluster):
+            return False
+        if self.is_query != other.is_query:
+            return False
+        return self.signature() == other.signature()
+
 def calc_embedding_for_cluster_batch(clusters: list[SemanticCluster]) -> None:
     texts = [sc.text() for sc in clusters]
     embeddings = get_embedding_batch(texts)
@@ -446,8 +490,8 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
     N_STEP = -1
     
     text_pair_to_node_pairs: dict[tuple[str, str], tuple[Vertex, Vertex]] = {}
-    for node_q in query_hypergraph.vertices:
-        for node_d in data_hypergraph.vertices:
+    for node_q in sorted(query_hypergraph.vertices, key=_vertex_sort_key):
+        for node_d in sorted(data_hypergraph.vertices, key=_vertex_sort_key):
             text_pair_to_node_pairs[(node_q.text(), node_d.text())] = (node_q, node_d)
     
     # send text_pair_to_node_pairs's keys (tuple[str, str]) to get_nli_labels_batch, get the labels for the value (tuple[Node, Node])
@@ -469,17 +513,18 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
         # print(f"Query Node: {node_q.text()}, Likely Data Nodes: {[n.text() for n in likely_nodes[node_q]]}")
     
     cluster_pairs: set[tuple[SemanticCluster, SemanticCluster, float]] = set()
-    for u in query_hypergraph.vertices:
-        for v in query_hypergraph.neighbors(u, N_STEP):
+    for u in sorted(query_hypergraph.vertices, key=_vertex_sort_key):
+        neighbors = sorted(query_hypergraph.neighbors(u, N_STEP), key=_vertex_sort_key)
+        for v in neighbors:
             q_paths = query_hypergraph.paths(u, v)
-            u_prime_candidates = likely_nodes.get(u, set())
-            v_prime_candidates = likely_nodes.get(v, set())
+            u_prime_candidates = sorted(likely_nodes.get(u, set()), key=_vertex_sort_key)
+            v_prime_candidates = sorted(likely_nodes.get(v, set()), key=_vertex_sort_key)
             d_paths = []
             for u_prime in u_prime_candidates:
                 for v_prime in v_prime_candidates:
                     d_paths.extend(data_hypergraph.paths(u_prime, v_prime))
-            q_paths = path_clean(q_paths)
-            d_paths = path_clean(d_paths)
+            q_paths = sorted(path_clean(q_paths), key=_path_sort_key)
+            d_paths = sorted(path_clean(d_paths), key=_path_sort_key)
             # print(f"Query Vertex Pair: ({u.text()}, {v.text()}), Paths: {len(q_paths)} * {len(d_paths)} = {len(q_paths) * len(d_paths)}")
             q_clusters = [SemanticCluster(p.hyperedges, query_hypergraph.doc) for p in q_paths]
             d_clusters = [SemanticCluster(p.hyperedges, data_hypergraph.doc) for p in d_paths]
@@ -509,7 +554,10 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
     # remove all same pairs
     ans_pairs = []
     seen_pairs: set[tuple[frozenset[int], frozenset[int]]] = set()
-    for qc, dc, score in cluster_pairs:
+    for qc, dc, score in sorted(
+        cluster_pairs,
+        key=lambda pair: (_cluster_sort_key(pair[0]), _cluster_sort_key(pair[1]), -pair[2])
+    ):
         qc_id_set = frozenset(id(e) for e in qc.hyperedges)
         dc_id_set = frozenset(id(e) for e in dc.hyperedges)
         pair_key = (qc_id_set, dc_id_set)
@@ -517,7 +565,17 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
             seen_pairs.add(pair_key)
             ans_pairs.append((qc, dc, score))
 
-    return ans_pairs
+    unique_pairs: list[tuple[SemanticCluster, SemanticCluster, float]] = []
+    seen_text_pairs: set[tuple[str, str]] = set()
+    for qc, dc, score in ans_pairs:
+        key = (qc.text(), dc.text())
+        if key in seen_text_pairs:
+            continue
+        seen_text_pairs.add(key)
+        unique_pairs.append((qc, dc, score))
+
+    unique_pairs = sorted(unique_pairs, key=lambda pair: (pair[0].text(), pair[1].text(), -pair[2]))
+    return unique_pairs
 
 def node_sequence_to_text(nodes: list[Node]) -> str:
     start, end = nodes[0], nodes[-1]
@@ -662,13 +720,14 @@ def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster, score_threshold: flo
                 key = (s1, s2)
                 path_pair_need_to_calc.add(key)
     
+    path_pairs: list[tuple[str, str]] = sorted(path_pair_need_to_calc)
     path_list_1: list[str] = []
     path_list_2: list[str] = []
-    for s1, s2 in path_pair_need_to_calc:
+    for s1, s2 in path_pairs:
         path_list_1.append(s1)
         path_list_2.append(s2)
     similarities = get_similarity_batch(path_list_1, path_list_2)
-    for i, (s1, s2) in enumerate(path_pair_need_to_calc):
+    for i, (s1, s2) in enumerate(path_pairs):
         path_score_cache[(s1, s2)] = similarities[i]
     
     for u, v in matches:

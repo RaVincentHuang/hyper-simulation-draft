@@ -45,12 +45,17 @@
     
 
 
+import os
+
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
 _model_cache = {}
 
 def get_nli_labels_batch(pairs: list[tuple[str, str]]) -> list[str]:
     if 'nli-deberta-v3-base' not in _model_cache:
         from sentence_transformers import CrossEncoder
-        _model_cache['nli-deberta-v3-base'] = CrossEncoder('cross-encoder/nli-deberta-v3-base')
+        _model_cache['nli-deberta-v3-base'] = CrossEncoder('cross-encoder/nli-deberta-v3-base', device="cpu")
     model = _model_cache['nli-deberta-v3-base']
     scores = model.predict(pairs)
     label_mapping = ['contradiction', 'entailment', 'neutral']

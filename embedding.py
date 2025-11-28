@@ -1,3 +1,9 @@
+import os
+import random
+
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+
 from sentence_transformers import SentenceTransformer
 from modelscope import AutoModel, AutoTokenizer, AutoModelForCausalLM
 import torch
@@ -19,9 +25,21 @@ def last_token_pool(last_hidden_states: Tensor, attention_mask: Tensor) -> Tenso
 # model = AutoModel.from_pretrained('Qwen/Qwen3-Embedding-4B')
 
 _model_cache = {}
-
+_embedding_cache: dict[str, np.ndarray] = {}
 
 max_length = 8192
+
+_DEFAULT_SEED = int(os.environ.get("SC_SEED", "42"))
+random.seed(_DEFAULT_SEED)
+np.random.seed(_DEFAULT_SEED)
+torch.manual_seed(_DEFAULT_SEED)
+torch.cuda.manual_seed_all(_DEFAULT_SEED)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+try:
+    torch.use_deterministic_algorithms(True, warn_only=True)
+except Exception:
+    pass
 
 def get_embedding_batch_old(texts: list[str]) -> list[np.ndarray]:
     if 'Qwen3-Embedding-4B' not in _model_cache:
@@ -45,16 +63,30 @@ def get_embedding_batch_old(texts: list[str]) -> list[np.ndarray]:
     embedding_list = embeddings.tolist()
     return embedding_list
 
-def get_embedding_batch(texts: list[str], N: int=8) -> list[np.ndarray]:
+def _get_sentence_transformer() -> SentenceTransformer:
     if "Qwen/Qwen3-Embedding-0.6B" not in _model_cache:
-        _model_cache["Qwen/Qwen3-Embedding-0.6B"] = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B")
-    model = _model_cache["Qwen/Qwen3-Embedding-0.6B"]
-    embeddings = []
-    for i in range(0, len(texts), N):
-        batch_texts = texts[i:i+N]
-        batch_embeddings = model.encode(batch_texts, convert_to_numpy=True, normalize_embeddings=True)
-        embeddings.extend(batch_embeddings)
-    return embeddings
+        model = SentenceTransformer("Qwen/Qwen3-Embedding-0.6B", device="cpu")
+        model.eval()
+        _model_cache["Qwen/Qwen3-Embedding-0.6B"] = model
+    return _model_cache["Qwen/Qwen3-Embedding-0.6B"]
+
+
+def get_embedding_batch(texts: list[str], N: int=8) -> list[np.ndarray]:
+    model = _get_sentence_transformer()
+    uncached: list[str] = [t for t in texts if t not in _embedding_cache]
+    for i in range(0, len(uncached), N):
+        batch_texts = uncached[i:i+N]
+        if not batch_texts:
+            continue
+        batch_embeddings = model.encode(
+            batch_texts,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+            show_progress_bar=False,
+        )
+        for text, emb in zip(batch_texts, batch_embeddings):
+            _embedding_cache[text] = emb
+    return [_embedding_cache[text] for text in texts]
 
 def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     a_norm = a / np.linalg.norm(a)
