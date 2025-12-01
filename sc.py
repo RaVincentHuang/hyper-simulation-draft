@@ -485,34 +485,182 @@ def clean_semantic_cluster_pairs(pairs: list[tuple[SemanticCluster, SemanticClus
     return cleaned_pairs
         
 
-def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hypergraph) -> list[tuple[SemanticCluster, SemanticCluster, float]]:
-    single_cluster_q: list[SemanticCluster] = []
-    for e in query_hypergraph.hyperedges:
-        single_cluster_q.append(SemanticCluster([e], query_hypergraph.doc))
+def _build_cluster_closure(
+    initial_q_edges: set[Hyperedge],
+    initial_d_edges: set[Hyperedge],
+    query_hypergraph: Hypergraph,
+    data_hypergraph: Hypergraph,
+    matched_edges: list[tuple[Hyperedge, Hyperedge, float]],
+    matched_vertices: dict[Vertex, set[Vertex]],
+    edge_similarity_threshold: float = 0.7
+) -> tuple[set[Hyperedge], set[Hyperedge]]:
+    """
+    递归地构建cluster闭包。
+    如果一对匹配的边中有节点匹配了其他边，那就添加进去，直到没有新的边可以添加。
+    
+    Args:
+        initial_q_edges: 初始的query边集合
+        initial_d_edges: 初始的data边集合
+        query_hypergraph: query超图
+        data_hypergraph: data超图
+        matched_edges: 所有匹配的边对列表 (q_edge, d_edge, score)
+        matched_vertices: 匹配的节点映射 {q_vertex: set[d_vertices]}
+        edge_similarity_threshold: 边相似度阈值
+    
+    Returns:
+        (query_edges闭包, data_edges闭包)
+    """
+    q_edges = set(initial_q_edges)
+    d_edges = set(initial_d_edges)
+    
+    # 构建边到顶点的映射
+    q_edge_to_vertices: dict[Hyperedge, set[Vertex]] = {}
+    d_edge_to_vertices: dict[Hyperedge, set[Vertex]] = {}
+    
+    for edge in query_hypergraph.hyperedges:
+        q_edge_to_vertices[edge] = set(edge.vertices)
+    for edge in data_hypergraph.hyperedges:
+        d_edge_to_vertices[edge] = set(edge.vertices)
+    
+    # 构建顶点到边的映射
+    q_vertex_to_edges: dict[Vertex, set[Hyperedge]] = {}
+    d_vertex_to_edges: dict[Vertex, set[Hyperedge]] = {}
+    
+    for edge in query_hypergraph.hyperedges:
+        for vertex in edge.vertices:
+            if vertex not in q_vertex_to_edges:
+                q_vertex_to_edges[vertex] = set()
+            q_vertex_to_edges[vertex].add(edge)
+    
+    for edge in data_hypergraph.hyperedges:
+        for vertex in edge.vertices:
+            if vertex not in d_vertex_to_edges:
+                d_vertex_to_edges[vertex] = set()
+            d_vertex_to_edges[vertex].add(edge)
+    
+    # 构建匹配边对的快速查找映射
+    q_edge_to_matched_d_edges: dict[Hyperedge, list[tuple[Hyperedge, float]]] = {}
+    d_edge_to_matched_q_edges: dict[Hyperedge, list[tuple[Hyperedge, float]]] = {}
+    
+    for q_edge, d_edge, score in matched_edges:
+        if score >= edge_similarity_threshold:
+            if q_edge not in q_edge_to_matched_d_edges:
+                q_edge_to_matched_d_edges[q_edge] = []
+            q_edge_to_matched_d_edges[q_edge].append((d_edge, score))
+            
+            if d_edge not in d_edge_to_matched_q_edges:
+                d_edge_to_matched_q_edges[d_edge] = []
+            d_edge_to_matched_q_edges[d_edge].append((q_edge, score))
+    
+    # 递归添加匹配的边，直到闭包
+    changed = True
+    iteration = 0
+    max_iterations = 100  # 防止无限循环
+    
+    while changed and iteration < max_iterations:
+        changed = False
+        iteration += 1
         
-    # calc the embeddings by `get_embedding_batch` of single_cluster_q
+        # 收集当前cluster中的所有顶点
+        q_vertices_in_cluster: set[Vertex] = set()
+        for edge in q_edges:
+            q_vertices_in_cluster.update(q_edge_to_vertices.get(edge, set()))
+        
+        d_vertices_in_cluster: set[Vertex] = set()
+        for edge in d_edges:
+            d_vertices_in_cluster.update(d_edge_to_vertices.get(edge, set()))
+        
+        # 对于当前cluster中的每个query顶点，找到匹配的data顶点
+        # 然后找到包含这些匹配顶点的边，如果这些边与query中的边匹配，则添加
+        for q_vertex in q_vertices_in_cluster:
+            matched_d_vertices = matched_vertices.get(q_vertex, set())
+            for d_vertex in matched_d_vertices:
+                # 找到包含这个d_vertex的边
+                candidate_d_edges = d_vertex_to_edges.get(d_vertex, set())
+                for d_edge in candidate_d_edges:
+                    if d_edge in d_edges:
+                        continue  # 已经在cluster中
+                    
+                    # 检查是否有query边与这个d_edge匹配
+                    matched_q_edges = d_edge_to_matched_q_edges.get(d_edge, [])
+                    for q_edge, score in matched_q_edges:
+                        if q_edge in q_edges:
+                            continue  # 已经在cluster中
+                        
+                        # 检查q_edge是否与当前cluster中的顶点有连接
+                        q_edge_vertices = q_edge_to_vertices.get(q_edge, set())
+                        if q_edge_vertices & q_vertices_in_cluster:  # 有交集
+                            q_edges.add(q_edge)
+                            d_edges.add(d_edge)
+                            changed = True
+                            break  # 找到一个匹配就够了
+        
+        # 反向：对于当前cluster中的每个data顶点，找到匹配的query顶点
+        for d_vertex in d_vertices_in_cluster:
+            # 找到匹配的query顶点
+            matched_q_vertices = [q_v for q_v, d_vs in matched_vertices.items() if d_vertex in d_vs]
+            for q_vertex in matched_q_vertices:
+                # 找到包含这个q_vertex的边
+                candidate_q_edges = q_vertex_to_edges.get(q_vertex, set())
+                for q_edge in candidate_q_edges:
+                    if q_edge in q_edges:
+                        continue  # 已经在cluster中
+                    
+                    # 检查是否有data边与这个q_edge匹配
+                    matched_d_edges = q_edge_to_matched_d_edges.get(q_edge, [])
+                    for d_edge, score in matched_d_edges:
+                        if d_edge in d_edges:
+                            continue  # 已经在cluster中
+                        
+                        # 检查d_edge是否与当前cluster中的顶点有连接
+                        d_edge_vertices = d_edge_to_vertices.get(d_edge, set())
+                        if d_edge_vertices & d_vertices_in_cluster:  # 有交集
+                            q_edges.add(q_edge)
+                            d_edges.add(d_edge)
+                            changed = True
+                            break  # 找到一个匹配就够了
+    
+    return q_edges, d_edges
+
+
+def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hypergraph) -> list[tuple[SemanticCluster, SemanticCluster, float]]:
+    """
+    新的实现：基于边和节点匹配的递归cluster构造。
+    1. 匹配所有的边和节点
+    2. 对于每一对匹配的边，递归地添加相关的边（如果边中的节点匹配了其他边）
+    3. 求闭包，确保所有相关的边都被包含
+    """
+    # Step 1: 为所有单个边创建cluster并计算embedding
+    single_cluster_q: list[SemanticCluster] = []
+    edge_to_cluster_q: dict[Hyperedge, SemanticCluster] = {}
+    for e in query_hypergraph.hyperedges:
+        sc = SemanticCluster([e], query_hypergraph.doc)
+        single_cluster_q.append(sc)
+        edge_to_cluster_q[e] = sc
+        
     texts_q = [sc.text() for sc in single_cluster_q]
     embeddings_q = get_embedding_batch(texts_q)
     for i, sc in enumerate(single_cluster_q):
         sc.embedding = np.array(embeddings_q[i])
     
     single_cluster_d: list[SemanticCluster] = []
+    edge_to_cluster_d: dict[Hyperedge, SemanticCluster] = {}
     for e in data_hypergraph.hyperedges:
-        single_cluster_d.append(SemanticCluster([e], data_hypergraph.doc))
+        sc = SemanticCluster([e], data_hypergraph.doc)
+        single_cluster_d.append(sc)
+        edge_to_cluster_d[e] = sc
     
     texts_d = [sc.text() for sc in single_cluster_d]
     embeddings_d = get_embedding_batch(texts_d)
     for i, sc in enumerate(single_cluster_d):
         sc.embedding = np.array(embeddings_d[i])
     
-    N_STEP = 4
-    
+    # Step 2: 匹配所有的节点
     text_pair_to_node_pairs: dict[tuple[str, str], tuple[Vertex, Vertex]] = {}
     for node_q in sorted(query_hypergraph.vertices, key=_vertex_sort_key):
         for node_d in sorted(data_hypergraph.vertices, key=_vertex_sort_key):
             text_pair_to_node_pairs[(node_q.text(), node_d.text())] = (node_q, node_d)
     
-    # send text_pair_to_node_pairs's keys (tuple[str, str]) to get_nli_labels_batch, get the labels for the value (tuple[Node, Node])
     text_pairs = list(text_pair_to_node_pairs.keys())
     labels = get_nli_labels_batch(text_pairs)
     node_pair_to_label: dict[tuple[Vertex, Vertex], str] = {}
@@ -520,56 +668,71 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
         node_pair = text_pair_to_node_pairs[text_pair]
         node_pair_to_label[node_pair] = labels[i]
     
-    likely_nodes: dict[Vertex, set[Vertex]] = {}
+    matched_vertices: dict[Vertex, set[Vertex]] = {}
     for (node_q, node_d), label in node_pair_to_label.items():
         if label == "entailment" or (label == "neutral" and node_q.is_domain(node_d)):
-            if node_q not in likely_nodes:
-                likely_nodes[node_q] = set()
-            likely_nodes[node_q].add(node_d)
+            if node_q not in matched_vertices:
+                matched_vertices[node_q] = set()
+            matched_vertices[node_q].add(node_d)
     
-    # for node_q in likely_nodes:
-        # print(f"Query Node: {node_q.text()}, Likely Data Nodes: {[n.text() for n in likely_nodes[node_q]]}")
+    # Step 3: 匹配所有的边对（基于embedding相似度）
+    matched_edges: list[tuple[Hyperedge, Hyperedge, float]] = []
+    edge_similarity_threshold = 0.6  # 边相似度阈值
     
+    for q_sc in single_cluster_q:
+        if q_sc.embedding is None:
+            continue
+        for d_sc in single_cluster_d:
+            if d_sc.embedding is None:
+                continue
+            score = cosine_similarity(q_sc.embedding, d_sc.embedding)
+            if score >= edge_similarity_threshold:
+                q_edge = q_sc.hyperedges[0]
+                d_edge = d_sc.hyperedges[0]
+                matched_edges.append((q_edge, d_edge, score))
+    
+    print(f"Found {len(matched_edges)} matched edge pairs (threshold={edge_similarity_threshold})")
+    
+    # Step 4: 对于每一对匹配的边，递归地构建cluster闭包
     cluster_pairs: set[tuple[SemanticCluster, SemanticCluster, float]] = set()
-    for u in sorted(query_hypergraph.vertices, key=_vertex_sort_key):
-        neighbors = sorted(query_hypergraph.neighbors(u, N_STEP), key=_vertex_sort_key)
-        for v in neighbors:
-            q_paths = query_hypergraph.paths(u, v)
-            u_prime_candidates = sorted(likely_nodes.get(u, set()), key=_vertex_sort_key)
-            v_prime_candidates = sorted(likely_nodes.get(v, set()), key=_vertex_sort_key)
-            d_paths = []
-            for u_prime in u_prime_candidates:
-                for v_prime in v_prime_candidates:
-                    d_paths.extend(data_hypergraph.paths(u_prime, v_prime))
-            q_paths = sorted(path_clean(q_paths), key=_path_sort_key)
-            d_paths = sorted(path_clean(d_paths), key=_path_sort_key)
-            # print(f"Query Vertex Pair: ({u.text()}, {v.text()}), Paths: {len(q_paths)} * {len(d_paths)} = {len(q_paths) * len(d_paths)}")
-            q_clusters = [SemanticCluster(p.hyperedges, query_hypergraph.doc) for p in q_paths]
-            d_clusters = [SemanticCluster(p.hyperedges, data_hypergraph.doc) for p in d_paths]
-            calc_embedding_for_cluster_batch(q_clusters)
-            calc_embedding_for_cluster_batch(d_clusters)
-            
-            k = 10
-            top_k = []
-            for qc in q_clusters:
-                if qc.embedding is None:
-                    continue
-                for dc in d_clusters:
-                    if dc.embedding is None:
-                        continue
-                    score = cosine_similarity(qc.embedding, dc.embedding)
-                    top_k.append((qc, dc, score))
-            top_k = clean_semantic_cluster_pairs(top_k)
-            # top_k = sorted(top_k, key=lambda x: x[2], reverse=True)[:k]
-            # cluster_pairs.(top_k)
-            for triplet in top_k:
-                cluster_pairs.add(triplet)
-            # print(f"Query Vertex Pair: ({u.text()}, {v.text()}), Top K: {len(top_k)}")
-            # for qc, dc, score in top_k:
-                # print(f"Query Cluster Text: {qc.text()}, Data Cluster Text: {dc.text()}, Score: {score:.4f}")
-                # print("-----")
+    processed_pairs: set[tuple[frozenset[int], frozenset[int]]] = set()
     
-    # remove all same pairs
+    for q_edge, d_edge, initial_score in matched_edges:
+        # 构建初始cluster
+        initial_q_edges = {q_edge}
+        initial_d_edges = {d_edge}
+        
+        # 递归地构建闭包
+        q_edges_closure, d_edges_closure = _build_cluster_closure(
+            initial_q_edges,
+            initial_d_edges,
+            query_hypergraph,
+            data_hypergraph,
+            matched_edges,
+            matched_vertices,
+            edge_similarity_threshold
+        )
+        
+        # 检查是否已经处理过这个pair
+        q_edge_ids = frozenset(id(e) for e in q_edges_closure)
+        d_edge_ids = frozenset(id(e) for e in d_edges_closure)
+        pair_key = (q_edge_ids, d_edge_ids)
+        
+        if pair_key in processed_pairs:
+            continue
+        processed_pairs.add(pair_key)
+        
+        # 创建cluster并计算最终相似度
+        q_cluster = SemanticCluster(list(q_edges_closure), query_hypergraph.doc)
+        d_cluster = SemanticCluster(list(d_edges_closure), data_hypergraph.doc)
+        
+        calc_embedding_for_cluster_batch([q_cluster, d_cluster])
+        
+        if q_cluster.embedding is not None and d_cluster.embedding is not None:
+            final_score = cosine_similarity(q_cluster.embedding, d_cluster.embedding)
+            cluster_pairs.add((q_cluster, d_cluster, final_score))
+    
+    # Step 5: 清理和去重
     ans_pairs = []
     seen_pairs: set[tuple[frozenset[int], frozenset[int]]] = set()
     for qc, dc, score in sorted(
