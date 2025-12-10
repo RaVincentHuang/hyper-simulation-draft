@@ -5,7 +5,7 @@ from pywsd.lesk import simple_lesk
 from spacy.tokens import Token
 
 
-INDUSTRIAL_ANCHORS = [
+ANCHORS = [
     # --------------------------------------------------------------------------
     # 1. TECHNOLOGY & DIGITAL (技术与数字资产)
     # --------------------------------------------------------------------------
@@ -203,7 +203,7 @@ DEFAULT_MAPPING = {
 
 class TokenAbstractor:
     def __init__(self):
-        self.anchors = INDUSTRIAL_ANCHORS
+        self.anchors = ANCHORS
         # 为了加速匹配，可以将 anchor set 预处理，但这里为了逻辑清晰保持原样
 
     def _spacy_to_wn_pos(self, spacy_pos):
