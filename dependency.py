@@ -276,7 +276,7 @@ class Node:
                     
                     # Skip if less than 2 nodes remain (coreference requires at least 2 entities)
                     if len(cluster_tokens) < 2:
-                        print(f"    Skipping cluster {cluster_id}: only {len(cluster_tokens)} token node(s)")
+                        # print(f"    Skipping cluster {cluster_id}: only {len(cluster_tokens)} token node(s)")
                         cluster_id += 1
                         continue
                     
@@ -371,9 +371,9 @@ class Node:
                     
                     cluster_id += 1
                 else:
-                    print(f"    Skipping cluster {cluster_id} (only {len(cluster_tokens)} token node, need > 1)")
+                    # print(f"    Skipping cluster {cluster_id} (only {len(cluster_tokens)} token node, need > 1)")
                     cluster_id += 1
-            print(f"\n[Coreference Processing] Completed. Total clusters processed: {cluster_id}\n")
+            # print(f"\n[Coreference Processing] Completed. Total clusters processed: {cluster_id}\n")
         
         roots = [node for node in nodes if node.head is None]
         for root in roots:
@@ -510,7 +510,7 @@ class Dependency:
     # e.g., in "Alice and Bob went to the store", "Bob" will get the same children as "Alice"
     # Execute this pass by Level-Order Traversal
     def solve_conjunctions(self):
-        print("Solving conjunctions...\n")
+        # print("Solving conjunctions...\n")
         queue = self.roots.copy()
         next_level: list[Node] = []
         while queue:

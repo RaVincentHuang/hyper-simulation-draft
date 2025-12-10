@@ -13,6 +13,7 @@ query_hypergraph = Hypergraph.load(query_file)
 data_hypergraph = Hypergraph.load(data_file)
 
 pairs = get_semantic_cluster_pairs(query_hypergraph, data_hypergraph)
+# 可能需要尝试：如果存在子集能包含所有的情况，则替换为子集
 for qc, dc, score in pairs:
     print(f"Query Cluster Text: {qc.text()}, qc len: {sum(len(he.vertices) for he in qc.hyperedges)}")
     print(f"Vertices in Query Cluster:[{', '.join(v.text() for v in qc.get_vertices())}]")

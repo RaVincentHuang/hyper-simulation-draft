@@ -816,7 +816,7 @@ def _path_score(s1: str, cnt1: int, s2: str, cnt2: int, path_score_cache: dict[t
         path_score_cache[(s1, s2)] = sim
     return sim / (cnt1 + cnt2)
 
-def _get_matched_vertices(vertices1: list[Vertex], vertices2: list[Vertex]) -> dict[Vertex, set[Vertex]]:
+def _get_matched_vertices(vertices1: list[Vertex], vertices2: list[Vertex]) -> dict[Vertex, set[Vertex]]: # 松紧可以调整
     matched_vertices: dict[Vertex, set[Vertex]] = {}
     text_pair_to_node_pairs: dict[tuple[str, str], tuple[Vertex, Vertex]] = {}
     for node1 in vertices1:
@@ -842,7 +842,7 @@ def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster, score_threshold: flo
         
     # for v in sc2.get_vertices():
     #     print(f"SC2 Vertex: '{v.text()}', POS: {v.poses}, ENT: {v.ents}")
-    
+    # 如果两个边的节点很少，则输出结果会很少
     sc1_vertices = list(filter(lambda v: not (v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX)), sc1.get_vertices()))
     sc2_vertices = list(filter(lambda v: not (v.pos_equal(Pos.VERB) or v.pos_equal(Pos.AUX)), sc2.get_vertices()))
     
@@ -907,10 +907,10 @@ def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster, score_threshold: flo
     
     likely_nodes = _get_matched_vertices(sc1_vertices, sc2_vertices)
     
-    
+
     sc2_pairs: list[tuple[Vertex, Vertex]] = []
     sc2_paths: dict[tuple[Vertex, Vertex], tuple[str, int]] = {}
-    
+    # 核心
     for u, u_prime in sc1_pairs:
         for v, v_prime in itertools.product(likely_nodes.get(u, set()), likely_nodes.get(u_prime, set())):
             if v == v_prime:
@@ -937,7 +937,7 @@ def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster, score_threshold: flo
             else:
                 sc2_pairs.append((v_prime, v))
                 sc2_paths[(v_prime, v)] = (s2_inv, cnt2)
-
+    # 让每一个节点和root做一次计算，通过此计算能得到一个分数。核心在于确定超边的子边方向
     match_scores: dict[tuple[Vertex, Vertex], float] = {}
     
     for u, v in itertools.product(sc1_vertices, sc2_vertices):

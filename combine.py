@@ -85,7 +85,7 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
     token_map = _calc_same_tokens(doc, correfs)
     # print(f"Token map: {token_map}")
     for span_text, positions in token_map.items():
-        print(f"Considering coreference span: {span_text}")
+        # print(f"Considering coreference span: {span_text}")
         for start, end in positions:
             span = doc[start:end]
             if ent_token_idxs.intersection(range(span.start, span.end)):
@@ -97,7 +97,7 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
     for ent in doc.ents:
         if ent_token_idxs.intersection(range(ent.start, ent.end)):
             continue
-        print(f"Merging entity span: {ent.text}")
+        # print(f"Merging entity span: {ent.text}")
         spans_to_merge.append(ent)
         ent_token_idxs.update(range(ent.start, ent.end))
 
@@ -160,7 +160,7 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
             if span_start + 1 == span_end or (span_end - span_start) > max_span_tokens:
                 continue
             span = doc[span_start:span_end]
-            print(f"Considering noun phrase span: {span}")
+            # print(f"Considering noun phrase span: {span}")
             
             if noun_token_idxs.intersection(range(span.start, span.end)):
                 for start, end in spans_to_merge_on_noun.keys():
@@ -212,7 +212,7 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
             if ent_token_idxs.intersection(range(span.start, span.end)):
                 continue
             
-            print(f"Verbal phrase span: {span}")
+            # print(f"Verbal phrase span: {span}")
             spans_to_merge.append(span)
             ent_token_idxs.update(range(span.start, span.end))
 
@@ -243,7 +243,7 @@ def combine(doc: Doc, correfs: set[str]=set()) -> list[Span]:
             if ent_token_idxs.intersection(range(span.start, span.end)):
                 continue
             
-            print("Adjectival phrase span: ", span)
+            # print("Adjectival phrase span: ", span)
             spans_to_merge.append(span)
             ent_token_idxs.update(range(span.start, span.end))
 
