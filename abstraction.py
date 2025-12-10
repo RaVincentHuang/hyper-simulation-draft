@@ -6,72 +6,200 @@ from spacy.tokens import Token
 
 
 INDUSTRIAL_ANCHORS = [
-    # --- IT & Data (数字资产) ---
-    ("ProgrammingLanguage", {"programming_language.n.01"}),
-    ("Software",            {"software.n.01", "computer_program.n.01", "app.n.01", "operating_system.n.01"}),
+    # --------------------------------------------------------------------------
+    # 1. TECHNOLOGY & DIGITAL (技术与数字资产)
+    # --------------------------------------------------------------------------
+    ("AI_Model",            {"artificial_intelligence.n.01", "expert_system.n.01", "neural_network.n.01"}),
+    ("Software",            {"software.n.01", "computer_program.n.01", "app.n.01", "operating_system.n.01", "browser.n.01"}),
     ("Database",            {"database.n.01", "information_system.n.01"}),
-    ("Network",             {"computer_network.n.01", "internet.n.01", "web.n.01", "cyberspace.n.01"}),
-    ("Hardware",            {"computer_hardware.n.01", "hardware.n.03", "device.n.01", "server.n.03"}),
-    ("CyberAttack",         {"cyberattack.n.01", "virus.n.03", "malware.n.01"}),
-    ("Data",                {"data.n.01", "information.n.01", "dataset.n.01", "record.n.01", "file.n.01"}),
-    
-    # --- Transport & Logistics (交通物流) ---
-    ("Aircraft",            {"aircraft.n.01", "drone.n.01"}),
-    ("Watercraft",          {"vessel.n.03", "ship.n.01", "boat.n.01"}),
-    ("RailVehicle",         {"train.n.01", "locomotive.n.01"}),
-    ("Vehicle",             {"vehicle.n.01", "transport.n.01", "car.n.01", "truck.n.01", "automobile.n.01"}), 
-    ("Infrastructure",      {"infrastructure.n.02", "road.n.01", "bridge.n.01", "airport.n.01", "port.n.01"}),
+    ("CyberThreat",         {"computer_virus.n.01", "malware.n.01", "cyberterrorism.n.01", "security_hole.n.01"}),
+    ("Network",             {"computer_network.n.01", "internet.n.01", "web.n.01", "intranet.n.01", "server.n.03"}),
+    ("MobileDevice",        {"cellular_telephone.n.01", "tablet.n.03"}), 
+    ("ComputerHardware",    {"computer.n.01", "peripheral.n.01", "processor.n.01", "chip.n.01", "screen.n.01"}),
+    ("DigitalData",         {"data.n.01", "file.n.01", "dataset.n.01", "digital_image.n.01", "code.n.03"}),
 
-    # --- Manufacturing & Engineering (制造工程) ---
-    ("Factory",             {"factory.n.01", "plant.n.01", "manufacturing_plant.n.01"}),
-    ("Machine",             {"machine.n.01", "engine.n.01", "motor.n.01", "robot.n.01", "mechanism.n.05"}),
-    ("Tool",                {"tool.n.01", "implement.n.01"}),
-    ("Material",            {"material.n.01", "raw_material.n.01", "substance.n.01", "metal.n.01", "plastic.n.01"}),
-    ("Energy",              {"energy.n.01", "electricity.n.01", "power.n.01", "fuel.n.01"}),
+    # --------------------------------------------------------------------------
+    # 2. FINANCE & ECONOMY (金融与经济)
+    # --------------------------------------------------------------------------
+    ("Currency",            {"currency.n.01", "money.n.01", "cryptocurrency.n.01"}), # 注意: Crypto在老WN可能没有，需依赖NER
+    ("FinancialInst",       {"financial_institution.n.01", "bank.n.02", "exchange.n.06"}), # 银行/交易所
+    ("FinancialAsset",      {"stock.n.01", "bond.n.01", "security.n.04", "asset.n.01", "fund.n.01"}),
+    ("Tax",                 {"tax.n.01", "tariff.n.01", "levy.n.01"}),
+    ("EconomicMetric",      {"gross_domestic_product.n.01", "inflation.n.01", "interest_rate.n.01", "budget.n.01"}),
+    ("Transaction",         {"transaction.n.01", "payment.n.01", "investment.n.01", "loan.n.01"}),
 
-    # --- Business & Legal (商业法律) ---
-    ("Company",             {"company.n.01", "enterprise.n.02", "corporation.n.01", "firm.n.01"}),
-    ("Government",          {"government.n.01", "agency.n.01", "authority.n.02"}),
-    ("Team",                {"team.n.01", "committee.n.01", "commission.n.01"}),
-    ("Contract",            {"contract.n.01", "agreement.n.01", "deal.n.01"}),
-    ("Regulation",          {"law.n.02", "regulation.n.01", "rule.n.03", "policy.n.02", "standard.n.01"}),
-    ("Document",            {"document.n.01", "report.n.01", "publication.n.01", "manual.n.01"}),
-    ("Currency",            {"currency.n.01", "money.n.01"}),
+    # --------------------------------------------------------------------------
+    # 3. HEALTHCARE & LIFE SCIENCES (医疗与生命科学)
+    # --------------------------------------------------------------------------
+    ("Disease",             {"disease.n.01", "illness.n.01", "syndrome.n.01", "infection.n.01"}),
+    ("Medication",          {"drug.n.01", "medicine.n.02", "vaccine.n.01", "antibiotic.n.01"}),
+    ("MedicalDevice",       {"medical_instrument.n.01", "implant.n.01", "diagnostic.n.01"}),
+    ("BodyPart",            {"body_part.n.01", "organ.n.01"}),
+    ("Microorganism",       {"microorganism.n.01", "virus.n.01", "bacterium.n.01"}),
+    ("HealthcareFacility",  {"hospital.n.01", "clinic.n.01", "pharmacy.n.01"}),
 
-    # --- People & Roles (人物角色) ---
-    ("Professional",        {"professional.n.01", "expert.n.01", "engineer.n.01", "scientist.n.01", "manager.n.01", "developer.n.01"}),
-    ("Worker",              {"worker.n.01", "employee.n.01"}),
-    ("Customer",            {"customer.n.01", "client.n.01", "user.n.01"}),
-    ("Leader",              {"leader.n.01", "head.n.01", "director.n.01", "chief.n.01"}),
+    # --------------------------------------------------------------------------
+    # 4. MANUFACTURING & MATERIALS (制造与材料)
+    # --------------------------------------------------------------------------
+    ("Vehicle_Land",        {"car.n.01", "truck.n.01", "bus.n.01", "train.n.01", "locomotive.n.01"}),
+    ("Vehicle_Air",         {"aircraft.n.01", "plane.n.01", "drone.n.01", "helicopter.n.01"}),
+    ("Vehicle_Water",       {"vessel.n.03", "ship.n.01", "boat.n.01", "submarine.n.01"}),
+    ("Machine",             {"machine.n.01", "engine.n.01", "motor.n.01", "robot.n.01", "generator.n.01"}),
+    ("Tool",                {"tool.n.01", "implement.n.01", "device.n.01"}),
+    ("RawMaterial",         {"raw_material.n.01", "ore.n.01", "timber.n.01"}),
+    ("Metal",               {"metal.n.01", "alloy.n.01", "steel.n.01", "gold.n.03"}),
+    ("Chemical",            {"chemical.n.01", "compound.n.02", "element.n.01", "acid.n.01"}),
+    ("Textile",             {"fabric.n.01", "cloth.n.01"}),
+    ("EnergySource",        {"fossil_fuel.n.01", "electricity.n.01", "solar_energy.n.01", "oil.n.01", "gas.n.02"}),
+
+    # --------------------------------------------------------------------------
+    # 5. LEGAL, GOV & SECURITY (法律、政府与安全)
+    # --------------------------------------------------------------------------
+    ("LegalDocument",       {"contract.n.01", "treaty.n.01", "will.n.03", "license.n.01", "constitution.n.01"}),
+    ("LawRegulation",       {"law.n.02", "regulation.n.01", "statute.n.01", "act.n.02"}),
+    ("GovernmentBody",      {"government.n.01", "ministry.n.01", "agency.n.01", "court.n.01", "council.n.01"}),
+    ("MilitaryUnit",        {"military_unit.n.01", "army.n.01", "navy.n.01"}),
+    ("Weapon",              {"weapon.n.01", "gun.n.01", "missile.n.01", "bomb.n.01"}),
+    ("Crime",               {"crime.n.01", "felony.n.01", "fraud.n.01", "theft.n.01"}),
+
+    # --------------------------------------------------------------------------
+    # 6. ROLES & PEOPLE (角色与人物)
+    # --------------------------------------------------------------------------
+    ("Executive",           {"executive.n.01", "director.n.01", "chief.n.01", "president.n.04"}), # CEO/CFO级别
+    ("Official",            {"official.n.01", "politician.n.01", "diplomat.n.01", "judge.n.01"}),
+    ("Professional",        {"professional.n.01", "expert.n.01", "engineer.n.01", "lawyer.n.01", "scientist.n.01", "doctor.n.01"}),
+    ("Worker",              {"worker.n.01", "laborer.n.01", "employee.n.01"}),
+    ("Consumer",            {"consumer.n.01", "customer.n.01", "user.n.01", "client.n.01"}),
+    ("Family",              {"relative.n.01", "parent.n.01", "child.n.01", "spouse.n.01"}),
+
+    # --------------------------------------------------------------------------
+    # 7. LOCATION & INFRASTRUCTURE (地点与基建)
+    # --------------------------------------------------------------------------
+    ("GeoPoliticalEntity",  {"country.n.02", "state.n.01", "province.n.01", "nation.n.02"}),
+    ("CityTown",            {"city.n.01", "town.n.01", "village.n.01", "capital.n.03"}),
+    ("Infrastructure",      {"infrastructure.n.02", "road.n.01", "bridge.n.01", "tunnel.n.01", "railway.n.01"}),
+    ("TransitHub",          {"airport.n.01", "station.n.01", "port.n.01", "harbor.n.01"}),
+    ("Building_Commercial", {"office_building.n.01", "skyscraper.n.01", "store.n.01", "hotel.n.01"}),
+    ("Building_Industrial", {"factory.n.01", "plant.n.01", "warehouse.n.01", "power_station.n.01"}),
+    ("Building_Residential",{"house.n.01", "apartment.n.01"}),
+    ("NaturalFeature",      {"mountain.n.01", "river.n.01", "ocean.n.01", "forest.n.01", "lake.n.01"}),
+
+    # --------------------------------------------------------------------------
+    # 8. ABSTRACT & METRICS (抽象与度量)
+    # --------------------------------------------------------------------------
+    ("TimeDuration",        {"time_period.n.01", "year.n.01", "month.n.01", "century.n.01"}),
+    ("TimePoint",           {"date.n.01", "day.n.01", "moment.n.01"}),
+    ("QuantityMetric",      {"measure.n.02", "quantity.n.01", "percentage.n.01", "amount.n.03", "distance.n.01"}),
+    ("Methodology",         {"method.n.01", "technique.n.01", "procedure.n.01", "algorithm.n.01", "strategy.n.01"}),
+    ("IntellectualProp",    {"copyright.n.01", "patent.n.01", "trademark.n.01"}),
+    ("Event_Disaster",      {"catastrophe.n.01", "disaster.n.01", "earthquake.n.01", "flood.n.01", "fire.n.01"}),
+    ("Event_Social",        {"social_event.n.01", "ceremony.n.01", "conference.n.01", "meeting.n.01"}),
+    ("Language",            {"language.n.01"}),
+
+    # --------------------------------------------------------------------------
+    # 9. GENERAL FALLBACKS (通用兜底)
+    # --------------------------------------------------------------------------
+    ("Company",             {"company.n.01", "enterprise.n.02", "firm.n.01"}),
+    ("Organization",        {"organization.n.01", "group.n.01"}),
     ("Person",              {"person.n.01"}),
-
-    # --- Location (地点) ---
-    ("City",                {"city.n.01", "town.n.01", "municipality.n.01"}),
-    ("Country",             {"country.n.02", "nation.n.02"}),
-    ("Building",            {"building.n.01", "structure.n.01", "edifice.n.01"}),
-    ("Room",                {"room.n.01", "area.n.05"}),
-    ("NaturalPlace",        {"body_of_water.n.01", "geological_formation.n.01"}),
-    
-    # --- Activities & Events (动态) ---
-    ("Project",             {"project.n.01", "undertaking.n.01", "program.n.02"}),
-    ("Process",             {"process.n.06", "procedure.n.01", "workflow.n.01", "operation.n.05"}),
-    ("Transaction",         {"transaction.n.01", "sale.n.01", "payment.n.01"}),
-    ("Incident",            {"accident.n.01", "error.n.01", "failure.n.01", "crash.n.02", "bug.n.02"}),
-    ("Meeting",             {"meeting.n.01", "conference.n.01", "gathering.n.01"}),
-    
-    # --- Concepts (抽象) ---
-    ("Metric",              {"measure.n.02", "quantity.n.01", "rate.n.02", "amount.n.03", "value.n.02"}),
-    ("TimePeriod",          {"time_period.n.01", "time_unit.n.01"}),
-    ("Method",              {"method.n.01", "technique.n.01", "algorithm.n.01", "approach.n.01"}),
-    ("Problem",             {"problem.n.01", "trouble.n.01", "issue.n.01"}),
-    
-    # --- Fallbacks (通用兜底) ---
-    ("Group",               {"group.n.01", "organization.n.01", "social_group.n.01"}),
-    ("Location",            {"location.n.01", "place.n.01", "area.n.01"}),
-    ("Event",               {"event.n.01"}),
-    ("Object",              {"artifact.n.01", "physical_entity.n.01", "object.n.01"}),
+    ("Location",            {"location.n.01", "place.n.01"}),
+    ("Product",             {"product.n.02", "commodity.n.01", "merchandise.n.01"}),
+    ("Artifact",            {"artifact.n.01", "physical_entity.n.01"}),
     ("Concept",             {"abstraction.n.06", "idea.n.01"})
 ]
+
+COMPATIBILITY_MATRIX = {
+    # --- 人物与社会群体 ---
+    "PERSON": {
+        "Professional", "Worker", "Leader", "Customer", "Politician", 
+        "Artist", "Athlete", "Scientist", "Criminal"
+    },
+    "NORP": { # Nationalities, Religious, Political groups
+        "SocialGroup", "PoliticalParty", "Religion", "Ethnicity", "Team", 
+        "Organization" # 有时 NORP 也可以被视为一种松散组织
+    },
+
+    # --- 机构与设施 ---
+    "ORG": {
+        "Company", "Government", "Team", "NonProfit", "FinancialInst", 
+        "University", "Media", "PoliticalParty", "School", "Agency"
+    },
+    "FAC": { # Buildings, Airports, Highways
+        "Building", "Infrastructure", "Airport", "Station", "Road", 
+        "Bridge", "Factory", "Hospital", "Structure"
+    },
+
+    # --- 地理与行政 ---
+    "GPE": { # Countries, Cities, States
+        "City", "Country", "Province", "State", "Municipality", "Nation"
+    },
+    "LOC": { # Non-GPE locations (Mountains, Bodies of Water)
+        "NaturalPlace", "Mountain", "BodyOfWater", "Continent", "Region", "Land"
+    },
+
+    # --- 人造物与产品 ---
+    "PRODUCT": {
+        "Vehicle", "Software", "Hardware", "Machine", "Weapon", 
+        "Food", "Chemical", "Drug", "Clothing", "Furniture", "Tool", 
+        "Aircraft", "Watercraft"
+    },
+    "WORK_OF_ART": { # Books, Songs, Movies
+        "Document", "Book", "Movie", "Song", "Painting", "Sculpture", 
+        "Game", "Software", "Show", "Publication"
+    },
+
+    # --- 法律与语言 ---
+    "LAW": {
+        "Regulation", "Constitution", "Treaty", "Act", "Rule"
+    },
+    "LANGUAGE": {
+        "Language", "Communication"
+    },
+
+    # --- 时间 ---
+    "DATE": {
+        "TimePeriod", "Year", "Month", "Day", "Date"
+    },
+    "TIME": {
+        "TimePeriod", "Time", "Duration", "Hour"
+    },
+
+    # --- 事件 ---
+    "EVENT": {
+        "Incident", "Disaster", "SocialEvent", "SportsEvent", "War", 
+        "Competition", "Festival", "Ceremony"
+    },
+
+    # --- 数值与度量 (通常 WSD 对这些词效果不明显，主要靠 Regex 或 NER 本身) ---
+    "PERCENT": {"Metric", "Percentage", "Rate"},
+    "MONEY":   {"Currency", "Money", "Price", "Cost"},
+    "QUANTITY": {"Metric", "Distance", "Weight", "Volume", "Area", "Speed"},
+    
+    # --- 序数与基数 (通常不作为实体，但如果需要抽象) ---
+    "ORDINAL": {"Order", "Rank"},
+    "CARDINAL": {"Number", "Count", "Amount"}
+}
+
+DEFAULT_MAPPING = {
+    "PERSON":       "Person",
+    "NORP":         "Group",          # 民族/宗教归为群体
+    "FAC":          "Structure",      # 设施归为结构
+    "ORG":          "Organization",
+    "GPE":          "GeoPolitical",
+    "LOC":          "Location",
+    "PRODUCT":      "Product",
+    "EVENT":        "Event",
+    "WORK_OF_ART":  "CreativeWork",   # 艺术作品
+    "LAW":          "Regulation",
+    "LANGUAGE":     "Language",
+    "DATE":         "Time",
+    "TIME":         "Time",
+    "PERCENT":      "Metric",
+    "MONEY":        "Currency",
+    "QUANTITY":     "Metric",
+    "ORDINAL":      "Value",
+    "CARDINAL":     "Value"
+}
 
 class TokenAbstractor:
     def __init__(self):
@@ -141,15 +269,11 @@ class TokenAbstractor:
 
         # 3. 混合决策 (NER + WSD)
         if ner_tag:
-            if ner_tag == "ORG":
-                if wn_cat in ["Company", "FinancialInst"]: return wn_cat
-                return "Company" # Default refinement
+            allowed_set = COMPATIBILITY_MATRIX.get(ner_tag, None)
+            if wn_cat and allowed_set and wn_cat in allowed_set:
+                return wn_cat
             
-            if ner_tag == "GPE" or ner_tag == "LOC":
-                if wn_cat in ["NaturalPlace", "City", "Country"]: return wn_cat
-                return "Location"
-            
-            return "Entity" # 简化处理其他 NER
+            return DEFAULT_MAPPING.get(ner_tag, wn_cat if wn_cat else "Object")
 
         # 4. 纯 WordNet 结果
         if wn_cat:
