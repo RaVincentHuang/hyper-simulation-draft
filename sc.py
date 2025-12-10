@@ -1084,3 +1084,11 @@ def get_d_match(sc1: SemanticCluster, sc2: SemanticCluster, score_threshold: flo
         final_matches.append((u, best_v, best_score))
     
     return final_matches
+
+
+# cosine判断
+# 1. 文本本身之间的余弦相似性
+# 2. root节点的文本相似性，可以考虑使用lemma，避免出现太多的根与根的匹配
+# 3. 交叉 
+
+# 结合四个通道取个值
