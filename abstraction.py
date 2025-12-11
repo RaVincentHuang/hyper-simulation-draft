@@ -1,5 +1,4 @@
 import spacy
-import nltk
 from nltk.corpus import wordnet as wn
 from pywsd.lesk import simple_lesk
 from spacy.tokens import Token
@@ -247,9 +246,9 @@ class TokenAbstractor:
             return "Object"
 
         # 2. 获取经过消歧的 Synset
-        target_synset = None
-        if token.pos_ in ["NOUN", "PROPN"]:
-            target_synset = self._get_contextual_synset(token, doc)
+        # target_synset = None
+        # if token.pos_ in ["NOUN", "PROPN"]:
+        target_synset = self._get_contextual_synset(token, doc)
         
         wn_cat = None
         if target_synset:
@@ -281,6 +280,47 @@ class TokenAbstractor:
             
         # 5. 最终兜底
         return "Object" if token.pos_ in ["NOUN", "PROPN"] else "Unknown"
+    
+    def get_abstraction_path(self, token: Token, doc) -> list[str]:
+        """
+        获取纯 WordNet 的上位词路径 (支持 名词、动词、形容词、副词)。
+        
+        Returns:
+            list[str]: 
+            - 名词/动词: ['entity.n.01', ..., 'dog.n.01']
+            - 形容词/副词: ['fast.a.01'] (通常只有一层)
+        """
+        # 1. 映射 POS
+        wn_pos = self._spacy_to_wn_pos(token.pos_)
+        if not wn_pos:
+            # 如果是连词、介词等 WordNet 不收录的词，返回空或特定标识
+            return [] 
+
+        # 2. 获取上下文相关的 Synset
+        # PyWSD 支持所有这些词性的消歧
+        synset = self._get_contextual_synset(token, doc)
+        
+        # 3. 如果无法识别 (WordNet收录不全)，返回空路径或自身
+        if not synset:
+            # 这里的策略是：如果找不到 Synset，就无法建立路径
+            # 你也可以选择返回 ['entity.n.01'] 作为绝对兜底，但对于动词/形容词这可能不准确
+            return []
+
+        # 4. 获取上位词路径
+        # 注意: Adjective 和 Adverb 在 WordNet 中通常没有 hypernym_paths
+        paths = synset.hypernym_paths()
+        
+        if not paths:
+            # Case A: 形容词/副词，或者位于根节点的词
+            # 直接返回它自己，作为路径的唯一节点
+            return [synset.name()]
+
+        # Case B: 名词/动词，通常有路径
+        # 取第一条路径
+        raw_path = paths[0]
+        
+        # 5. 转换为字符串列表
+        return [node.name() for node in raw_path]
 
 # ==============================================================================
 # 4. 测试与演示
