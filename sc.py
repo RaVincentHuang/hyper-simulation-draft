@@ -10,6 +10,31 @@ from embedding import get_embedding_batch, cosine_similarity, get_similarity_bat
 from nli import get_nli_label, get_nli_labels_batch
 
 
+def abstraction_lca(query: list[str], data: list[str]) -> tuple[str, int]:
+    """
+    计算 LCA。如果两个路径完全没有重合（根节点不同），返回 None, -1。
+    """
+    if not query or not data:
+        return '', -1
+        
+    # 检查根节点是否相同
+    # 名词根是 entity，动词根可能是 act，如果不相同，说明属于不同词性域
+    if query[0] != data[0]:
+        return '', -1
+        
+    lca = query[0]
+    depth = 0
+    
+    min_len = min(len(query), len(data))
+    for i in range(min_len):
+        if query[i] == data[i]:
+            lca = query[i]
+            depth = i
+        else:
+            break
+            
+    return lca, depth
+
 def _vertex_sort_key(vertex: Vertex) -> tuple[int, str]:
     return (vertex.id, vertex.text())
 
