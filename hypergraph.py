@@ -1,5 +1,5 @@
 from platform import node
-from dependency import LocalDoc, Node, Pos, Entity, Relationship, Dep
+from dependency import LocalDoc, Node, Pos, Entity, Relationship, Dep, Tag
 import itertools
 
 import index
@@ -82,15 +82,81 @@ class Vertex:
             return False
         return any(pos1 == pos2 for (pos1, pos2) in itertools.product(self.poses, other.poses))
     
+    def tag_range(self, tag: 'Tag') -> bool:
+        """判断 self 的 tag 是否与给定 tag 在同一范围内（细粒度）
+        
+        Tag 范围分组：
+        1. 名词类: NN, NNS, NNP, NNPS
+        2. 动词类: VB, VBZ, VBP, VBD, VBN, VBG
+        3. 形容词类: JJ, JJR, JJS
+        4. 副词类: RB, RBR, RBS
+        5. 代词类: PRP, PRPD, WP, WPD
+        6. 限定词类: DT, PDT, WDT
+        7. 数词类: CD
+        8. Wh-词类: WP, WPD, WRB, WDT
+        """
+        from dependency import Tag
+        
+        noun_tags = {Tag.NN, Tag.NNS, Tag.NNP, Tag.NNPS}
+        verb_tags = {Tag.VB, Tag.VBZ, Tag.VBP, Tag.VBD, Tag.VBN, Tag.VBG}
+        adj_tags = {Tag.JJ, Tag.JJR, Tag.JJS}
+        adv_tags = {Tag.RB, Tag.RBR, Tag.RBS}
+        pron_tags = {Tag.PRP, Tag.PRPD, Tag.WP, Tag.WPD}
+        det_tags = {Tag.DT, Tag.PDT, Tag.WDT}
+        num_tags = {Tag.CD}
+        
+        self_tags = {n.tag for n in self.nodes}
+        
+        if tag in noun_tags:
+            return bool(self_tags & noun_tags)
+        elif tag in verb_tags:
+            return bool(self_tags & verb_tags)
+        elif tag in adj_tags:
+            return bool(self_tags & adj_tags)
+        elif tag in adv_tags:
+            return bool(self_tags & adv_tags)
+        elif tag in pron_tags:
+            return bool(self_tags & pron_tags)
+        elif tag in det_tags:
+            return bool(self_tags & det_tags)
+        elif tag in num_tags:
+            return bool(self_tags & num_tags)
+        else:
+            return tag in self_tags
+    
     def is_domain(self, other: 'Vertex') -> bool:
-        # POS range
-        if any(self.pos_range(p) for p in other.poses):
+        self_has_ent = any(e != Entity.NOT_ENTITY for e in self.ents)
+        other_has_ent = any(e != Entity.NOT_ENTITY for e in other.ents)
+        if self_has_ent and other_has_ent:
+            return any(self.ent_range(e) for e in other.ents if e != Entity.NOT_ENTITY)
+        if self_has_ent != other_has_ent:
+            return False
+        return any(self.pos_range(p) for p in other.poses) # more strict：pose_same
+        # 再加一层word_net
+        
+    def is_domain_pos2tag(self, other: 'Vertex') -> bool:
+        """Same logic as is_domain, but replace pos_range with tag_range in fallback."""
+        self_has_ent = any(e != Entity.NOT_ENTITY for e in self.ents)
+        other_has_ent = any(e != Entity.NOT_ENTITY for e in other.ents)
+        if self_has_ent and other_has_ent:
+            return any(self.ent_range(e) for e in other.ents if e != Entity.NOT_ENTITY)
+        if self_has_ent != other_has_ent:
+            return False
+        # Use tag_range instead of pos_range
+        return any(self.tag_range(n.tag) for n in other.nodes)
+
+    def is_domain_tag(self, other: 'Vertex') -> bool:
+        # TAG range
+        if any(self.tag_range(n.tag) for n in other.nodes):
             return True
+        # POS range
+        # if any(self.pos_range(p) for p in other.poses):
+            # return True
         # ENT range
         if any(self.ent_range(e) for e in other.ents):
             return True
         return False
-    
+
     @staticmethod
     def resolved_text(node: 'Node') -> str:
         """Get resolved text for a node, handling coreference and pronoun antecedents."""
