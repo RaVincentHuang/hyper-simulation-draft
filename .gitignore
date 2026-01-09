@@ -14,3 +14,5 @@ test*.py
 simulation/
 hypergraphs/
 *.bat
+
+*.db
