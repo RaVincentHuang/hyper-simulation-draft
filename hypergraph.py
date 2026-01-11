@@ -81,81 +81,40 @@ class Vertex:
         if not self.poses or not other.poses:
             return False
         return any(pos1 == pos2 for (pos1, pos2) in itertools.product(self.poses, other.poses))
-    
-    def tag_range(self, tag: 'Tag') -> bool:
-        """判断 self 的 tag 是否与给定 tag 在同一范围内（细粒度）
         
-        Tag 范围分组：
-        1. 名词类: NN, NNS, NNP, NNPS
-        2. 动词类: VB, VBZ, VBP, VBD, VBN, VBG
-        3. 形容词类: JJ, JJR, JJS
-        4. 副词类: RB, RBR, RBS
-        5. 代词类: PRP, PRPD, WP, WPD
-        6. 限定词类: DT, PDT, WDT
-        7. 数词类: CD
-        8. Wh-词类: WP, WPD, WRB, WDT
-        """
-        from dependency import Tag
-        
-        noun_tags = {Tag.NN, Tag.NNS, Tag.NNP, Tag.NNPS}
-        verb_tags = {Tag.VB, Tag.VBZ, Tag.VBP, Tag.VBD, Tag.VBN, Tag.VBG}
-        adj_tags = {Tag.JJ, Tag.JJR, Tag.JJS}
-        adv_tags = {Tag.RB, Tag.RBR, Tag.RBS}
-        pron_tags = {Tag.PRP, Tag.PRPD, Tag.WP, Tag.WPD}
-        det_tags = {Tag.DT, Tag.PDT, Tag.WDT}
-        num_tags = {Tag.CD}
-        
-        self_tags = {n.tag for n in self.nodes}
-        
-        if tag in noun_tags:
-            return bool(self_tags & noun_tags)
-        elif tag in verb_tags:
-            return bool(self_tags & verb_tags)
-        elif tag in adj_tags:
-            return bool(self_tags & adj_tags)
-        elif tag in adv_tags:
-            return bool(self_tags & adv_tags)
-        elif tag in pron_tags:
-            return bool(self_tags & pron_tags)
-        elif tag in det_tags:
-            return bool(self_tags & det_tags)
-        elif tag in num_tags:
-            return bool(self_tags & num_tags)
-        else:
-            return tag in self_tags
-    
     def is_domain(self, other: 'Vertex') -> bool:
+        # 实体
         self_has_ent = any(e != Entity.NOT_ENTITY for e in self.ents)
         other_has_ent = any(e != Entity.NOT_ENTITY for e in other.ents)
         if self_has_ent and other_has_ent:
             return any(self.ent_range(e) for e in other.ents if e != Entity.NOT_ENTITY)
         if self_has_ent != other_has_ent:
             return False
-        return any(self.pos_range(p) for p in other.poses) # more strict：pose_same
-        # 再加一层word_net
-        
-    def is_domain_pos2tag(self, other: 'Vertex') -> bool:
-        """Same logic as is_domain, but replace pos_range with tag_range in fallback."""
-        self_has_ent = any(e != Entity.NOT_ENTITY for e in self.ents)
-        other_has_ent = any(e != Entity.NOT_ENTITY for e in other.ents)
-        if self_has_ent and other_has_ent:
-            return any(self.ent_range(e) for e in other.ents if e != Entity.NOT_ENTITY)
-        if self_has_ent != other_has_ent:
-            return False
-        # Use tag_range instead of pos_range
-        return any(self.tag_range(n.tag) for n in other.nodes)
 
-    def is_domain_tag(self, other: 'Vertex') -> bool:
-        # TAG range
-        if any(self.tag_range(n.tag) for n in other.nodes):
+        # 2. 无实体时，尝试 WordNet 语义领域匹配
+        if self._wordnet_domain_match(other):
             return True
-        # POS range
-        # if any(self.pos_range(p) for p in other.poses):
-            # return True
-        # ENT range
-        if any(self.ent_range(e) for e in other.ents):
+
+        # POS
+        return any(self.pos_range(p) for p in other.poses)
+    
+    def _wordnet_domain_match(self, other: 'Vertex') -> bool:
+        # 基于抽象标签匹配
+        self_abs = {n.wn_abstraction for n in self.nodes if n.wn_abstraction}
+        other_abs = {n.wn_abstraction for n in other.nodes if n.wn_abstraction}
+        if self_abs and other_abs and (self_abs & other_abs):
             return True
-        return False
+
+        # 基于上位词路径匹配
+        self_hyp = {h for n in self.nodes for h in n.wn_hypernym_path}
+        other_hyp = {h for n in other.nodes for h in n.wn_hypernym_path}
+
+        if not self_hyp or not other_hyp:
+            return False  # 无法判断语义领域，不默认为 True
+
+        top_level = {'entity.n.01', 'abstraction.n.06', 'physical_entity.n.01'}
+        common = (self_hyp & other_hyp) - top_level
+        return len(common) > 0
 
     @staticmethod
     def resolved_text(node: 'Node') -> str:

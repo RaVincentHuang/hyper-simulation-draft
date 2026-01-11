@@ -183,6 +183,10 @@ class Node:
         self.lefts: list[Node] = []
         self.rights: list[Node] = []
         
+        # WordNet 抽象信息（在 from_doc 时预计算）
+        self.wn_abstraction: str | None = None  # 抽象类型，如 "AI_Model", "Person"
+        self.wn_hypernym_path: list[str] = []   # 上位词路径
+        
     def set_sentence(self, sentence: str, start: int, end: int) -> None:
         self.sentence = sentence
         self.sentence_start = start
@@ -378,6 +382,14 @@ class Node:
         roots = [node for node in nodes if node.head is None]
         for root in roots:
             assert root.dep == Dep.ROOT or root.dep == Dep.dep, f"Root node dep should be ROOT or _SP, got {root.dep.name}"
+        
+        # 预计算 WordNet 抽象信息
+        from abstraction import TokenAbstractor
+        abstractor = TokenAbstractor()
+        for token, node in zip(doc, nodes):
+            node.wn_abstraction = abstractor.get_abstraction(token, doc)
+            node.wn_hypernym_path = abstractor.get_abstraction_path(token, doc)
+        
         return nodes, roots
     
     def __format__(self, format_spec: str) -> str:
