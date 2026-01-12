@@ -187,6 +187,9 @@ class Node:
         self.wn_abstraction: str | None = None  # 抽象类型，如 "AI_Model", "Person"
         self.wn_hypernym_path: list[str] = []   # 上位词路径
         
+        # Wikidata 标签信息（在 from_doc 时预计算）
+        self.wd_tags: dict[str, str] = {}  # 如 {"WD:InstanceOf": "software", "WD:FieldOfWork": "AI"}
+        
     def set_sentence(self, sentence: str, start: int, end: int) -> None:
         self.sentence = sentence
         self.sentence_start = start

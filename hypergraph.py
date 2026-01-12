@@ -1,8 +1,51 @@
 from platform import node
 from dependency import LocalDoc, Node, Pos, Entity, Relationship, Dep, Tag
 import itertools
+import os
+from datetime import datetime
 
 import index
+
+# Debug 日志管理器
+class DebugLogger:
+    _instance = None
+    _file = None
+    _log_dir = "debug_logs"
+    
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+    
+    @classmethod
+    def init(cls, filename: str = None):
+        """初始化日志文件，filename 为 None 时使用时间戳命名"""
+        inst = cls.get_instance()
+        if inst._file:
+            inst._file.close()
+        
+        os.makedirs(cls._log_dir, exist_ok=True)
+        if filename is None:
+            filename = f"is_domain_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        filepath = os.path.join(cls._log_dir, filename)
+        inst._file = open(filepath, 'w', encoding='utf-8')
+        inst.log(f"Debug log started at {datetime.now()}")
+        return filepath
+    
+    @classmethod
+    def log(cls, msg: str):
+        inst = cls.get_instance()
+        if inst._file:
+            inst._file.write(msg + '\n')
+            inst._file.flush()
+    
+    @classmethod
+    def close(cls):
+        inst = cls.get_instance()
+        if inst._file:
+            inst._file.close()
+            inst._file = None
 
 class Vertex:
     def __init__(self, id: int, nodes: list[Node]):
@@ -82,39 +125,139 @@ class Vertex:
             return False
         return any(pos1 == pos2 for (pos1, pos2) in itertools.product(self.poses, other.poses))
         
-    def is_domain(self, other: 'Vertex') -> bool:
-        # 实体
+    def is_domain(self, other: 'Vertex', debug: bool = False) -> bool:
+        # 获取文本用于 debug
+        self_text = ', '.join([n.text for n in self.nodes])
+        other_text = ', '.join([n.text for n in other.nodes])
+        
+        def _log(msg):
+            if debug:
+                DebugLogger.log(msg)
+        
+        _log(f"\n{'='*60}")
+        _log(f"[is_domain] 比较: '{self_text}' vs '{other_text}'")
+        _log(f"  Self:  ID={self.id}, POS={[p.name for p in self.poses]}, ENT={[e.name for e in self.ents]}")
+        _log(f"  Other: ID={other.id}, POS={[p.name for p in other.poses]}, ENT={[e.name for e in other.ents]}")
+
+        # 1. NER 实体匹配 第一步排除
         self_has_ent = any(e != Entity.NOT_ENTITY for e in self.ents)
         other_has_ent = any(e != Entity.NOT_ENTITY for e in other.ents)
+        
         if self_has_ent and other_has_ent:
-            return any(self.ent_range(e) for e in other.ents if e != Entity.NOT_ENTITY)
+            matched = any(self.ent_range(e) for e in other.ents if e != Entity.NOT_ENTITY)
+            self_ents = [e.name for e in self.ents if e != Entity.NOT_ENTITY]
+            other_ents = [e.name for e in other.ents if e != Entity.NOT_ENTITY]
+            _log(f"  [1.NER] self={self_ents}, other={other_ents} → {'✓ 匹配' if matched else '✗ 不匹配'}")
+            return matched
+        
         if self_has_ent != other_has_ent:
+            _log(f"  [1.NER] 一方有实体一方无 → ✗ False")
             return False
 
-        # 2. 无实体时，尝试 WordNet 语义领域匹配
-        if self._wordnet_domain_match(other):
-            return True
+        # 2. WordNet 第二步排除不一致的
+        wn_result = self._wordnet_domain_match(other, debug=debug)
+        if wn_result is False:
+            _log(f"  [2.WordNet] 最终结果 → {'✗'}")
+            return wn_result
 
-        # POS
-        return any(self.pos_range(p) for p in other.poses)
+        # 3. Wikidata
+        wd_result = self._wikidata_domain_match(other, debug=debug)
+        if wd_result is not None:
+            _log(f"  [3.Wikidata] 最终结果 → {'✓' if wd_result else '✗'}")
+            return wd_result
+
+        # 4. POS fallback
+        pos_matched = any(self.pos_range(p) for p in other.poses)
+        _log(f"  [4.POS] self={[p.name for p in self.poses]}, other={[p.name for p in other.poses]} → {'✓' if pos_matched else '✗'}")
+        return pos_matched
     
-    def _wordnet_domain_match(self, other: 'Vertex') -> bool:
-        # 基于抽象标签匹配
-        self_abs = {n.wn_abstraction for n in self.nodes if n.wn_abstraction}
-        other_abs = {n.wn_abstraction for n in other.nodes if n.wn_abstraction}
-        if self_abs and other_abs and (self_abs & other_abs):
-            return True
+    def _wordnet_domain_match(self, other: 'Vertex', debug: bool = False) -> bool | None:
+        def _log(msg):
+            if debug:
+                DebugLogger.log(msg)
+        
+        self_abs = {n.wn_abstraction for n in self.nodes if getattr(n, 'wn_abstraction', None)}
+        other_abs = {n.wn_abstraction for n in other.nodes if getattr(n, 'wn_abstraction', None)}
+        
+        self_text = ', '.join([f"'{n.text}'→{getattr(n, 'wn_abstraction', None)}" for n in self.nodes])
+        other_text = ', '.join([f"'{n.text}'→{getattr(n, 'wn_abstraction', None)}" for n in other.nodes])
+        _log(f"  [2.WordNet] 抽象类型:")
+        _log(f"    Self:  {self_text}")
+        _log(f"    Other: {other_text}")
+        
+        if self_abs and other_abs:
+            common = self_abs & other_abs
+            _log(f"    交集: {common if common else '(空)'} → {'✓' if common else '✗'}")
+            return bool(common)
 
-        # 基于上位词路径匹配
-        self_hyp = {h for n in self.nodes for h in n.wn_hypernym_path}
-        other_hyp = {h for n in other.nodes for h in n.wn_hypernym_path}
+        self_hyp = {h for n in self.nodes for h in getattr(n, 'wn_hypernym_path', [])}
+        other_hyp = {h for n in other.nodes for h in getattr(n, 'wn_hypernym_path', [])}
 
         if not self_hyp or not other_hyp:
-            return False  # 无法判断语义领域，不默认为 True
+            _log(f"    上位词路径缺失 (self={len(self_hyp)}, other={len(other_hyp)}) → 跳过")
+            return None
 
         top_level = {'entity.n.01', 'abstraction.n.06', 'physical_entity.n.01'}
         common = (self_hyp & other_hyp) - top_level
-        return len(common) > 0
+        result = len(common) > 0
+        _log(f"    上位词交集(排除顶层): {list(common)[:5]}{'...' if len(common) > 5 else ''} → {'✓' if result else '✗'}")
+        return result
+
+    def _wikidata_domain_match(self, other: 'Vertex', debug: bool = False) -> bool | None:
+        """基于 Wikidata 标签判断语义领域（运行时查询），返回 None 表示无法判断"""
+        from linking import WikidataTagger
+        
+        def _log(msg):
+            if debug:
+                DebugLogger.log(msg)
+
+        self_pairs = [(n.text, n.sentence) for n in self.nodes if n.pos in {Pos.NOUN, Pos.PROPN}]
+        other_pairs = [(n.text, n.sentence) for n in other.nodes if n.pos in {Pos.NOUN, Pos.PROPN}]
+        
+        if not self_pairs or not other_pairs:
+            _log(f"  [3.Wikidata] 节点为空 → 跳过")
+            return None
+
+        _log(f"  [3.Wikidata] 查询中...")
+        _log(f"    Self 查询: {[p[0] for p in self_pairs]}")
+        _log(f"    Other 查询: {[p[0] for p in other_pairs]}")
+
+        tagger = WikidataTagger()
+        all_pairs = self_pairs + other_pairs
+        all_results = tagger.batch_process(all_pairs)
+
+        self_results = all_results[:len(self_pairs)]
+        other_results = all_results[len(self_pairs):]
+
+        self_wd_values = set()
+        for i, res in enumerate(self_results):
+            for v in res.values():
+                self_wd_values.update(v.lower().split('; '))
+            if res:
+                _log(f"    '{self_pairs[i][0]}' → {dict(res)}")
+
+        other_wd_values = set()
+        for i, res in enumerate(other_results):
+            for v in res.values():
+                other_wd_values.update(v.lower().split('; '))
+            if res:
+                _log(f"    '{other_pairs[i][0]}' → {dict(res)}")
+
+        if not self_wd_values or not other_wd_values:
+            _log(f"    标签为空 (self={len(self_wd_values)}, other={len(other_wd_values)}) → 跳过")
+            return None
+
+        common_tags = self_wd_values & other_wd_values
+        result = bool(common_tags)
+
+        if result:
+            _log(f"    共同标签: {common_tags} → ✓")
+        else:
+            _log(f"    无共同标签:")
+            _log(f"      Self:  {self_wd_values}")
+            _log(f"      Other: {other_wd_values}")
+
+        return result
 
     @staticmethod
     def resolved_text(node: 'Node') -> str:
