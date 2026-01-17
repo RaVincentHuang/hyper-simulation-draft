@@ -9,7 +9,7 @@ from collections import defaultdict
 # ==========================================
 # 模拟相似度接口 (实际请接入你的 BERT/Embedding 模型)
 # ==========================================
-class WikidataTagger:
+class WikidataTagger: # RDF (src, rel, dst)
     def __init__(self, max_workers=10):
         self.headers = {'User-Agent': 'Bot/1.0 (Contact: your_email@example.com)'}
         self.wd_api = "https://www.wikidata.org/w/api.php"
@@ -203,3 +203,14 @@ if __name__ == "__main__":
         print(f"\nTerm: '{term}' | Context: '{context}'")
         for k, v in res.items():
             print(f"  {k}: {v}")
+<<<<<<< HEAD
+=======
+            
+    # tagger_cn = ConceptNetTagger()
+    # results_cn = tagger_cn.batch_process(batch_input)
+    # for (term, context), res in zip(batch_input, results_cn):
+    #     print(f"\n[ConceptNet] Term: '{term}' | Context: '{context}'")
+    #     for k, v in res.items():
+    #         print(f"  {k}: {v}")
+    
+>>>>>>> b309ff9 (add)
