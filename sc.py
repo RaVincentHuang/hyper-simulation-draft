@@ -448,6 +448,38 @@ class SemanticCluster:
             self._signature = self._build_signature()
         return self._signature
 
+    def to_triple(self) -> list[tuple[str, list[str]]]:
+        """
+        将 SemanticCluster 抽象为三元组形式: (root, [node1, node2, ...])
+        返回一个三元组列表，每个 hyperedge 对应一个三元组
+        """
+        triples = []
+        for he in self.hyperedges:
+            root_text = Vertex.resolved_text(he.current_node(he.root))
+            
+            # 收集非root的节点
+            args = []
+            for vertex in he.vertices:
+                if vertex == he.root:
+                    continue
+                node = he.current_node(vertex)
+                node_text = Vertex.resolved_text(node)
+                args.append(node_text)
+            
+            triples.append((root_text, args))
+        
+        return triples
+    
+    def to_triple_text(self) -> str:
+        """返回所有三元组的文本表示"""
+        texts = []
+        for root, args in self.to_triple():
+            if len(args) == 0:
+                texts.append(f"{root}()")
+            else:
+                texts.append(f"{root}({', '.join(args)})")
+        return " & ".join(texts)
+
     def __hash__(self) -> int:
         return hash((self.is_query, self.signature()))
 
@@ -463,6 +495,138 @@ def calc_embedding_for_cluster_batch(clusters: list[SemanticCluster]) -> None:
     embeddings = get_embedding_batch(texts)
     for i, sc in enumerate(clusters):
         sc.embedding = np.array(embeddings[i])
+
+
+def compare_triples(triple1: tuple[str, list[str]], triple2: tuple[str, list[str]]) -> float:
+    """比较两个三元组的相似度，返回 0-1 分数"""
+    root1, args1 = triple1
+    root2, args2 = triple2
+    
+    # 1. 比较root的相似度
+    root_sim = get_similarity(root1, root2)
+    
+    # 2. 比较参数的相似度（使用NLI）
+    if len(args1) == 0 and len(args2) == 0:
+        return root_sim
+    
+    if len(args1) == 0 or len(args2) == 0:
+        return root_sim * 0.5  # 参数数量不匹配，降低分数
+    
+    # 计算参数之间的最佳匹配
+    arg_scores = []
+    for arg1 in args1:
+        best_score = 0.0
+        for arg2 in args2:
+            label = get_nli_label(arg1, arg2)
+            if label == "entailment":
+                score = 1.0
+            elif label == "neutral":
+                score = 0.5
+            else:
+                score = 0.0
+            best_score = max(best_score, score)
+        arg_scores.append(best_score)
+    
+    avg_arg_score = sum(arg_scores) / len(arg_scores) if arg_scores else 0.0
+    
+    # 综合分数：root占60%，参数占40%
+    return root_sim * 0.6 + avg_arg_score * 0.4
+
+
+def match_vertices_by_triple(
+    q_edge: Hyperedge, 
+    d_edge: Hyperedge,
+    q_cluster: SemanticCluster,
+    d_cluster: SemanticCluster
+) -> dict[Vertex, Vertex]:
+    """基于三元组结构匹配两个边中的顶点"""
+    matches: dict[Vertex, Vertex] = {}
+    
+    # 获取三元组
+    q_triples = q_cluster.to_triple()
+    d_triples = d_cluster.to_triple()
+    
+    if not q_triples or not d_triples:
+        return matches
+    
+    q_triple = q_triples[0]  # 单边cluster只有一个三元组
+    d_triple = d_triples[0]
+    
+    q_root_text, q_args = q_triple
+    d_root_text, d_args = d_triple
+    
+    # 1. 匹配root节点
+    if get_similarity(q_root_text, d_root_text) > 0.6:
+        matches[q_edge.root] = d_edge.root
+    
+    # 2. 匹配参数节点
+    q_non_root_vertices = [v for v in q_edge.vertices if v != q_edge.root]
+    d_non_root_vertices = [v for v in d_edge.vertices if v != d_edge.root]
+    
+    # 使用NLI匹配参数
+    for q_vertex in q_non_root_vertices:
+        q_text = Vertex.resolved_text(q_edge.current_node(q_vertex))
+        best_match = None
+        best_score = 0.0
+        
+        for d_vertex in d_non_root_vertices:
+            if d_vertex in matches.values():
+                continue  # 已经被匹配
+            
+            d_text = Vertex.resolved_text(d_edge.current_node(d_vertex))
+            label = get_nli_label(q_text, d_text)
+            
+            if label == "entailment":
+                score = 1.0
+            elif label == "neutral" and q_vertex.is_domain(d_vertex):
+                score = 0.7
+            else:
+                score = 0.0
+            
+            if score > best_score:
+                best_score = score
+                best_match = d_vertex
+        
+        if best_match and best_score > 0.5:
+            matches[q_vertex] = best_match
+    
+    return matches
+
+
+def match_vertex_to_edge_by_triple(
+    vertex: Vertex,
+    edge: Hyperedge,
+    edge_cluster: SemanticCluster
+) -> tuple[bool, float]:
+    """判断顶点是否与边（三元组）匹配，返回 (命中, 分数)"""
+    triples = edge_cluster.to_triple()
+    if not triples:
+        return False, 0.0
+    
+    root_text, args = triples[0]
+    vertex_text = vertex.text()
+    
+    # 1. 检查是否与root匹配
+    root_sim = get_similarity(vertex_text, root_text)
+    if root_sim > 0.7:
+        return True, root_sim * 0.9  # root匹配给高分
+    
+    # 2. 检查是否与某个参数匹配
+    best_arg_score = 0.0
+    for arg in args:
+        label = get_nli_label(vertex_text, arg)
+        if label == "entailment":
+            score = 0.8
+        elif label == "neutral":
+            score = 0.5
+        else:
+            score = 0.0
+        best_arg_score = max(best_arg_score, score)
+    
+    if best_arg_score > 0.5:
+        return True, best_arg_score * 0.7  # 参数匹配给中等分
+    
+    return False, 0.0
 
 
 def path_clean(paths: list[Path]) -> list[Path]:
@@ -615,10 +779,18 @@ def _build_cluster_closure(
                         # 检查q_edge是否与当前cluster中的顶点有连接
                         q_edge_vertices = q_edge_to_vertices.get(q_edge, set())
                         if q_edge_vertices & q_vertices_in_cluster:  # 有交集
-                            q_edges.add(q_edge)
-                            d_edges.add(d_edge)
-                            changed = True
-                            break  # 找到一个匹配就够了
+                            # 额外检查：使用三元组验证点-边匹配
+                            d_edge_cluster = SemanticCluster([d_edge], data_hypergraph.doc)
+                            vertex_edge_match, match_score = match_vertex_to_edge_by_triple(
+                                q_vertex, d_edge, d_edge_cluster
+                            )
+                            
+                            # 如果三元组匹配分数足够高，或者原始分数很高，则添加
+                            if vertex_edge_match or score >= 0.75:
+                                q_edges.add(q_edge)
+                                d_edges.add(d_edge)
+                                changed = True
+                                break  # 找到一个匹配就够了
         
         # 反向：对于当前cluster中的每个data顶点，找到匹配的query顶点
         for d_vertex in d_vertices_in_cluster:
@@ -640,10 +812,18 @@ def _build_cluster_closure(
                         # 检查d_edge是否与当前cluster中的顶点有连接
                         d_edge_vertices = d_edge_to_vertices.get(d_edge, set())
                         if d_edge_vertices & d_vertices_in_cluster:  # 有交集
-                            q_edges.add(q_edge)
-                            d_edges.add(d_edge)
-                            changed = True
-                            break  # 找到一个匹配就够了
+                            # 额外检查：使用三元组验证点-边匹配
+                            q_edge_cluster = SemanticCluster([q_edge], query_hypergraph.doc)
+                            vertex_edge_match, match_score = match_vertex_to_edge_by_triple(
+                                d_vertex, q_edge, q_edge_cluster
+                            )
+                            
+                            # 如果三元组匹配分数足够高，或者原始分数很高，则添加
+                            if vertex_edge_match or score >= 0.75:
+                                q_edges.add(q_edge)
+                                d_edges.add(d_edge)
+                                changed = True
+                                break  # 找到一个匹配就够了
     
     return q_edges, d_edges
 
@@ -700,7 +880,7 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
                 matched_vertices[node_q] = set()
             matched_vertices[node_q].add(node_d)
     
-    # Step 3: 匹配所有的边对（基于embedding相似度）
+    # Step 3: 匹配所有的边对（结合embedding和三元组相似度）
     matched_edges: list[tuple[Hyperedge, Hyperedge, float]] = []
     edge_similarity_threshold = 0.6  # 边相似度阈值
     
@@ -710,11 +890,32 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
         for d_sc in single_cluster_d:
             if d_sc.embedding is None:
                 continue
-            score = cosine_similarity(q_sc.embedding, d_sc.embedding)
-            if score >= edge_similarity_threshold:
+            
+            # 1. Embedding相似度
+            emb_score = cosine_similarity(q_sc.embedding, d_sc.embedding)
+            
+            # 2. 三元组相似度
+            q_triples = q_sc.to_triple()
+            d_triples = d_sc.to_triple()
+            
+            triple_score = 0.0
+            if q_triples and d_triples:
+                triple_score = compare_triples(q_triples[0], d_triples[0])
+            
+            # 3. 综合分数：embedding占70%，三元组占30%
+            combined_score = emb_score * 0.7 + triple_score * 0.3
+            
+            if combined_score >= edge_similarity_threshold:
                 q_edge = q_sc.hyperedges[0]
                 d_edge = d_sc.hyperedges[0]
-                matched_edges.append((q_edge, d_edge, score))
+                matched_edges.append((q_edge, d_edge, combined_score))
+                
+                # 同时使用三元组匹配更新节点匹配
+                vertex_matches = match_vertices_by_triple(q_edge, d_edge, q_sc, d_sc)
+                for q_v, d_v in vertex_matches.items():
+                    if q_v not in matched_vertices:
+                        matched_vertices[q_v] = set()
+                    matched_vertices[q_v].add(d_v)
     
     print(f"Found {len(matched_edges)} matched edge pairs (threshold={edge_similarity_threshold})")
     
