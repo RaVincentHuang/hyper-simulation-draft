@@ -576,10 +576,13 @@ def match_vertices_by_triple(
             d_text = Vertex.resolved_text(d_edge.current_node(d_vertex))
             label = get_nli_label(q_text, d_text)
             
-            if label == "entailment":
-                score = 1.0
-            elif label == "neutral" and q_vertex.is_domain(d_vertex):
-                score = 0.7
+            if _legal_vertices(q_vertex, d_vertex):  # ← 统一入口
+                if label == "entailment":
+                    score = 1.0
+                elif label == "neutral":
+                    score = 0.7
+                else:
+                    score = 0.0
             else:
                 score = 0.0
             
@@ -985,6 +988,8 @@ def get_semantic_cluster_pairs(query_hypergraph: Hypergraph, data_hypergraph: Hy
     return unique_pairs
 
 def node_sequence_to_text(nodes: list[Node]) -> str:
+    if not nodes:
+        return ""
     start, end = nodes[0], nodes[-1]
     nodes = sorted(nodes, key=lambda n: n.index)
     texts = []
@@ -998,7 +1003,7 @@ def node_sequence_to_text(nodes: list[Node]) -> str:
         elif node.pos in {Pos.NOUN, Pos.PROPN, Pos.PRON}:
             texts.append("some")
         else:
-            texts.append(node.text)
+            texts.append(Vertex.resolved_text(node))
     return " ".join(texts)
         
 
@@ -1029,18 +1034,39 @@ def _better_path(s1: str, s2: str, s2_inv: str) -> bool:
     
 
 def _legal_vertices(v1: Vertex, v2: Vertex) -> bool:
+    # Step 1: 语义兼容性（保留你原有的 is_domain 逻辑）
     label = get_nli_label(v1.text(), v2.text())
-    if label == "entailment" or v1.is_domain(v2):
+    if not (label == "entailment" or (label == "neutral" and v1.is_domain(v2))):
+        return False
+
+    # Step 2: 【新增】句法角色（Dep）兼容性检查
+    dep1 = v1.dep()
+    dep2 = v2.dep()
+
+    # 定义兼容的依存关系组
+    SUBJECT_DEPS = {Dep.nsubj, Dep.nsubjpass, Dep.csubj, Dep.agent}
+    OBJECT_DEPS = {Dep.dobj, Dep.iobj, Dep.pobj, Dep.attr}
+    MODIFIER_DEPS = {Dep.amod, Dep.nmod, Dep.advmod, Dep.appos}
+
+    # 同组内允许匹配
+    if (dep1 in SUBJECT_DEPS and dep2 in SUBJECT_DEPS) or (dep1 in OBJECT_DEPS and dep2 in OBJECT_DEPS) or (dep1 in MODIFIER_DEPS and dep2 in MODIFIER_DEPS):
         return True
+
+    # 允许常见 paraphrase 跨组（如 nmod ↔ dobj）
+    if {dep1, dep2} <= {Dep.nmod, Dep.dobj}:
+        return True
+
+    # 其他情况拒绝（即使 is_domain 为真）
     return False
 
 def _path_score(s1: str, cnt1: int, s2: str, cnt2: int, path_score_cache: dict[tuple[str, str], float]) -> float:
-    if (s1, s2) in path_score_cache:
-        sim = path_score_cache[(s1, s2)]
-    else:
-        sim = get_similarity(s1, s2)
-        path_score_cache[(s1, s2)] = sim
-    return sim / (cnt1 + cnt2)
+    key = (s1, s2)
+    if key in path_score_cache:
+        return path_score_cache[key]
+    sim = get_similarity(s1, s2)
+    score = sim / (cnt1 + cnt2)
+    path_score_cache[key] = score
+    return score
 
 def _get_matched_vertices(vertices1: list[Vertex], vertices2: list[Vertex]) -> dict[Vertex, set[Vertex]]: # 松紧可以调整
     matched_vertices: dict[Vertex, set[Vertex]] = {}
