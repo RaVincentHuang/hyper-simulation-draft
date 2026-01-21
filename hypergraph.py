@@ -193,6 +193,12 @@ class Vertex:
             for node in vertex.nodes:
                 vertex_map[node] = vertex
         return vertex_map
+    
+    def dep(self) -> Dep:
+        # return the dep of the first node
+        if not self.nodes:
+            return Dep.ROOT
+        return self.nodes[0].dep
 
 class Hyperedge:
     def __init__(self, root: Vertex, vertices: list[Vertex], desc: str, full_desc: str, start: int, end: int):
