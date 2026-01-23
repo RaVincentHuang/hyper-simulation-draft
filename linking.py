@@ -203,14 +203,3 @@ if __name__ == "__main__":
         print(f"\nTerm: '{term}' | Context: '{context}'")
         for k, v in res.items():
             print(f"  {k}: {v}")
-<<<<<<< HEAD
-=======
-            
-    # tagger_cn = ConceptNetTagger()
-    # results_cn = tagger_cn.batch_process(batch_input)
-    # for (term, context), res in zip(batch_input, results_cn):
-    #     print(f"\n[ConceptNet] Term: '{term}' | Context: '{context}'")
-    #     for k, v in res.items():
-    #         print(f"  {k}: {v}")
-    
->>>>>>> b309ff9 (add)
